@@ -6,7 +6,7 @@ market data and lays it out so DuckDB can query it immediately.
 ```bash
 pip install 'komachi[duckdb]'
 komachi auth login --token hk_...
-komachi download --market GMO:BTC_JPY --start 2026-01-01 --end 2026-01-28
+komachi download --market GMO:BTC_JPY --start 2026-01-01
 komachi duckdb
 duckdb ~/kql-data/kql.duckdb
 ```
@@ -42,8 +42,8 @@ files.
 | `komachi status` | Grant, market-days used and remaining, expiry |
 | `komachi markets` | Markets your token covers, plus referred sources |
 | `komachi calendar --market MARKET` | Available and already-downloaded dates |
-| `komachi manifest --market ... --start ... --end ...` | Temporary URLs; `--dry-run` to price it first |
-| `komachi download --market ... --start ... --end ...` | Download a range, resumable and verified |
+| `komachi manifest --market ... --start ... --days N` | Temporary URLs; `--dry-run` to price it first |
+| `komachi download --market ... --start ...` | Download from a date. Resumable and verified |
 | `komachi refresh --file FILE_ID` | Re-sign one expired or failed file |
 | `komachi binance-import --symbol ... --start ... --end ...` | Import Binance history from Binance Vision |
 | `komachi local` | What is on disk already |
@@ -68,8 +68,34 @@ that is not available anywhere else.
 
 Access is counted in **market-days**: one market on one date, covering every
 data type published for it. Trade and OrderBook for one market/date are one
-market-day, not two. `--dry-run` reports the cost without spending it, and
-`download` asks before consuming anything.
+market-day, not two.
+
+`download` needs a market and a start date. By default it takes as many days
+as your remaining allowance covers; `--days N` asks for fewer. Before anything
+is fetched it shows what the run will do:
+
+```
+Market      COINCHECK:BTC_SPOT
+Dates       2025-07-01 .. 2025-07-07   (7 days, JST)
+Files       14 to download
+Size        207.7MB
+Cost        7 market-day(s); 21 remaining now, 14 afterwards
+```
+
+Everything in that summary is known without issuing a URL or spending
+anything, so you can see the range, the volume and the cost and then decide.
+
+## Interrupted downloads resume
+
+Re-run the same command. Files already complete are recognised from their size
+and checksum, dropped from the plan before any URL is requested, and so cost
+neither allowance nor part of the five-refresh budget. A market-day is charged
+once: fetching a day you have already opened is free, and the summary says so
+rather than showing an unexplained cost of zero.
+
+URLs are issued one at a time, immediately before the file they unlock. A
+pre-signed URL lives an hour, which is ample for one file and not for a
+hundred days of them.
 
 ## Tests
 

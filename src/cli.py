@@ -9,6 +9,7 @@ KQL_TOKEN, then the config file written by `auth login`.
 import argparse
 import os
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
@@ -18,7 +19,7 @@ from komachi.download import already_have, download_file
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
 from komachi.layout import local_inventory, view_sql
 from komachi.settings import DEFAULT_ROOT, ENV_FILE, TOKEN_FILE, resolve, save_token
-from komachi.weeks import describe, shapes, week_range
+from komachi.weeks import describe, shapes
 
 
 def _settings(args):
@@ -196,7 +197,8 @@ def cmd_calendar(args) -> int:
 
 
 def cmd_manifest(args) -> int:
-    start, end = _range(args)
+    start = args.start
+    end = (date.fromisoformat(start) + timedelta(days=args.days - 1)).isoformat()
     with _client(args) as client:
         if args.dry_run:
             estimate = client.manifest(args.market, start, end, dry_run=True)
@@ -215,12 +217,39 @@ def cmd_manifest(args) -> int:
     return 0
 
 
-def _confirm(estimate: dict) -> bool:
+def _show_plan(market, start, end, catalogued, pending, have, estimate, remaining) -> bool:
+    """Show what the run will do before it does any of it.
+
+    Everything here is known without issuing a URL or spending anything, so the
+    buyer sees the range, the volume and the cost and then decides. Returns
+    False when the allowance cannot cover it.
+    """
+    days = len({e["file_date"] for e in catalogued})
     spend = estimate["new_market_days"]
-    left = estimate["remaining_market_days"] - spend
-    print(f"This spends {spend} market-day(s) ({describe(spend)}) across {estimate['files']} file(s).")
-    print(f"Remaining afterwards: {left} ({describe(left)}).")
-    return input("Continue? [y/N] ").strip().lower() in ("y", "yes")
+    to_fetch = sum(e["size_bytes"] or 0 for e in pending)
+
+    print(f"Market      {market}")
+    print(f"Dates       {start} .. {end}   ({days} day{'s' if days != 1 else ''}, JST)")
+    print(f"Files       {len(pending)} to download" + (f", {have} already present" if have else ""))
+    print(f"Size        {_human_bytes(to_fetch)}")
+    print(f"Cost        {spend} market-day(s)"
+          + (f", {describe(spend)}" if spend >= 7 else "")
+          + f"; {remaining} remaining now, {remaining - spend} afterwards")
+
+    # A market-day is charged once. Re-fetching one already opened costs
+    # nothing, and without saying so a cost of zero for seven days reads as a
+    # bug rather than as the buyer getting what they already paid for.
+    free = days - spend
+    if free > 0:
+        print(f"{'':12}{free} of those day(s) are already paid for on this token")
+    if have:
+        print(f"{'':12}{have} file(s) already on disk will not be fetched again")
+
+    if not estimate["sufficient"]:
+        print(f"\nNot enough allowance: this needs {spend} and {remaining} remain.", file=sys.stderr)
+        print(f"Ask for fewer days:  --days {remaining}", file=sys.stderr)
+        return False
+    return True
 
 
 def cmd_download(args) -> int:
@@ -243,13 +272,18 @@ def cmd_download(args) -> int:
     counts next time.
     """
     dest = _settings(args).root
-    start, end = _range(args)
 
     with _client(args) as client:
-        # Free: reads the catalogue, issues nothing, consumes nothing.
-        catalogued = client.stats(args.market, start=start, end=end)
+        state = client.status()
+        remaining = state["remaining_market_days"]
+        if remaining < 1 and not args.days:
+            print(f"No allowance remaining on this token ({state['product_id']}).", file=sys.stderr)
+            return 1
+
+        # stats reads the catalogue: it issues nothing and consumes nothing.
+        catalogued, start, end = _plan(client, args, remaining)
         if not catalogued:
-            print(f"No files available for {args.market} between {start} and {end}.")
+            print(f"No data catalogued for {args.market} from {args.start}.")
             return 0
 
         pending = [e for e in catalogued if args.force or not already_have(e, dest)]
@@ -259,20 +293,14 @@ def cmd_download(args) -> int:
             print(f"All {len(catalogued)} file(s) for {args.market} {start}..{end} are already "
                   f"present and verified. Nothing to do.")
             return 0
-        if have:
-            print(f"{have} of {len(catalogued)} file(s) already present; continuing with {len(pending)}.\n")
-
         estimate = client.manifest(args.market, start, end, dry_run=True)
-        if not estimate["sufficient"]:
-            print(
-                f"Not enough allowance: this needs {estimate['new_market_days']} market-day(s), "
-                f"{estimate['remaining_market_days']} remaining.",
-                file=sys.stderr,
-            )
+        ok = _show_plan(args.market, start, end, catalogued, pending, have, estimate, remaining)
+        if not ok:
             return 1
-        if not args.yes and estimate["new_market_days"] > 0 and not _confirm(estimate):
+        if not args.yes and input("\nContinue? [y/N] ").strip().lower() not in ("y", "yes"):
             print("Cancelled.")
             return 0
+        print()
 
         failures = []
         with httpx.Client(timeout=120.0, follow_redirects=True) as http:
@@ -398,28 +426,29 @@ def cmd_decode(args) -> int:
     return 0
 
 
-def _end_or_weeks(p) -> None:
-    """A range is given as whole weeks, or as an explicit end date.
+def _plan(client, args, remaining: int) -> tuple[list[dict], str, str]:
+    """Decide what a run covers, and over which dates.
 
-    `--weeks` is listed first because the products are sold in weeks and that
-    is the shape a buyer is thinking in. `--end` stays because someone topping
-    up an odd gap should not have to do arithmetic to ask for four days.
+    Without `--days` it takes as many days as the allowance could pay for,
+    counting each as if it were unpaid. Days already consumed cost nothing, so
+    a run may finish with allowance to spare. Erring that way means the command
+    never spends more than the buyer was shown, and a leftover is visible
+    rather than an overdraft.
     """
-    group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--weeks", type=int, help="Whole weeks from --start. The usual way to ask")
-    group.add_argument("--end", help="Explicit last JST date, inclusive")
+    span = args.days if args.days else remaining
+    if span < 1:
+        return [], args.start, args.start
 
+    first = date.fromisoformat(args.start)
+    last = (first + timedelta(days=span - 1)).isoformat()
 
-def _range(args) -> tuple[str, str]:
-    """Resolve a range without moving the start.
-
-    A buyer asking for four weeks from a Wednesday means twenty-eight days from
-    that Wednesday. Snapping to a Monday would spend their allowance somewhere
-    they did not ask for.
-    """
-    if getattr(args, "weeks", None):
-        return week_range(args.start, args.weeks)
-    return args.start, args.end
+    catalogued = client.stats(args.market, start=args.start, end=last)
+    if not catalogued:
+        return [], args.start, last
+    # Clamp to what the catalogue holds: asking for 21 days across a gap should
+    # report the dates that exist rather than a range that overstates them.
+    dates = sorted({e["file_date"] for e in catalogued})
+    return catalogued, dates[0], dates[-1]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -446,6 +475,13 @@ layout
 
   Dates are Asia/Tokyo days; timestamps inside the files are UTC epochs.
   Run 'komachi duckdb' after downloading to query it.
+
+downloading
+  komachi download --market MARKET --start YYYY-MM-DD [--days N]
+
+  Needs a market and a start date. Without --days it takes as many days as the
+  remaining allowance covers. It shows the range, size and cost before
+  fetching anything, and re-running continues an interrupted run for free.
 """)
     parser.add_argument("--token", help="Purchase token; overrides KQL_TOKEN and stored config")
     parser.add_argument("--api-url", help="Kamakura Quant Lab API base URL")
@@ -487,16 +523,17 @@ layout
     p = sub.add_parser("manifest", help="Generate temporary URLs for a date range")
     p.add_argument("--market", required=True)
     p.add_argument("--start", required=True)
-    _end_or_weeks(p)
+    p.add_argument("--days", type=int, default=7, help="Days from --start")
     p.add_argument("--dry-run", action="store_true", help="Report cost without consuming the grant")
     p.add_argument("--urls-only", action="store_true", help="Print bare URLs, for wget or aria2c")
     p.set_defaults(func=cmd_manifest)
 
-    p = sub.add_parser("download", help="Download whole weeks, or an explicit range")
-    p.add_argument("--market", required=True)
-    p.add_argument("--start", required=True)
-    _end_or_weeks(p)
-    p.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
+    p = sub.add_parser("download", help="Download from a start date. Resumable")
+    p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")
+    p.add_argument("--start", required=True, help="First JST date, YYYY-MM-DD")
+    p.add_argument("--days", type=int,
+                   help="Days from --start. Defaults to what the remaining allowance covers")
+    p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p.add_argument("--force", action="store_true", help="Re-download files already present")
     p.set_defaults(func=cmd_download)
 
