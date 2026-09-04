@@ -59,6 +59,12 @@ def cmd_auth_login(args) -> int:
     return 0
 
 
+def _in_weeks(market_days: int) -> str:
+    """The storefront phrasing, when it says something the day count does not."""
+    text = describe(market_days)
+    return "" if text.endswith("market-days") or text == "none" else f"  ({text})"
+
+
 def cmd_status(args) -> int:
     with _client(args) as client:
         state = client.status()
@@ -66,8 +72,8 @@ def cmd_status(args) -> int:
     print(f"Product        {state['product_id']}")
     print(f"Token status   {state['token_status']}")
     print(f"Valid until    {state['valid_until']}")
-    print(f"Allowance      {granted} market-days  ({describe(granted)})")
-    print(f"Remaining      {remaining} market-days  ({describe(remaining)})")
+    print(f"Allowance      {granted} market-days{_in_weeks(granted)}")
+    print(f"Remaining      {remaining} market-days{_in_weeks(remaining)}")
     if state["start_date"] or state["end_date"]:
         print(f"Date window    {state['start_date'] or 'any'} .. {state['end_date'] or 'any'}")
 
@@ -269,11 +275,12 @@ def cmd_download(args) -> int:
     side has to keep: a re-run cannot spend a market-day that was already paid
     for. Everything else about entitlement is the service's to decide.
 
-    URLs are minted one at a time, immediately before the file they unlock. The
-    old flow asked for the whole range up front, which is fine for a week and
-    wrong for a hundred days: a pre-signed URL lives an hour, and 3.5 GB over a
-    domestic link does not finish in one, so the tail of the manifest expired
-    before it was ever used.
+    Files are fetched through the API rather than from a pre-signed URL held
+    on this side. The old flow asked for the whole range up front, which is
+    fine for a week and wrong for a hundred days: a signature lives an hour,
+    and 3.5 GB over a domestic link does not finish in one, so the tail of the
+    manifest expired before it was ever used. Asking the API per file moves
+    signing to the moment of use, where it cannot go stale.
     """
     dest = _settings(args).root
 
@@ -299,12 +306,15 @@ def cmd_download(args) -> int:
         print()
 
         failures = []
-        with httpx.Client(timeout=120.0, follow_redirects=True) as http:
+        # httpx drops Authorization when a redirect crosses origins, so the
+        # bearer token reaches the API and never object storage.
+        with httpx.Client(timeout=120.0, follow_redirects=True,
+                          headers=client.auth_header()) as http:
             for index, item in enumerate(pending, start=1):
                 label = f"[{index}/{len(pending)}] {item['file_date']} {item['data_type']}"
                 try:
-                    # Minted here so it is seconds old when it is used.
-                    entry = client.download_url(args.market, item["file_date"], item["data_type"])
+                    entry = dict(item, url=client.download_link(
+                        args.market, item["file_date"], item["data_type"]))
                     outcome = download_file(entry, dest, client=http, force=args.force)
                 except Exception as exc:
                     failures.append(item)
@@ -320,15 +330,6 @@ def cmd_download(args) -> int:
               f"succeeded is kept and will not be paid for again.", file=sys.stderr)
         return 1
     print("Query it with:  komachi duckdb")
-    return 0
-
-
-def cmd_refresh(args) -> int:
-    with _client(args) as client:
-        entry = client.refresh(args.file)
-    print(f"{entry['market']} {entry['file_date']} {entry['data_type']}")
-    print(f"Refresh {entry['refresh_count']}/{entry['max_refresh_count']}, expires {entry['expires_at']}")
-    print(entry["url"])
     return 0
 
 
@@ -523,10 +524,6 @@ downloading
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p.add_argument("--force", action="store_true", help="Re-download files already present")
     p.set_defaults(func=cmd_download)
-
-    p = sub.add_parser("refresh", help="Re-sign a file whose URL expired or failed")
-    p.add_argument("--file", required=True, help="dataset_file_id from a manifest or error message")
-    p.set_defaults(func=cmd_refresh)
 
     p = sub.add_parser("local", help="Show what is already downloaded")
     p.set_defaults(func=cmd_local)

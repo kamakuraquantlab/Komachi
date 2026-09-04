@@ -146,15 +146,15 @@ def test_transient_failure_is_retried(tmp_path):
     assert result.path.read_bytes() == payload
 
 
-def test_expired_url_is_not_retried(tmp_path):
-    """A 403 means the URL expired; retrying cannot help, so fail fast."""
+def test_a_rejected_signature_is_not_retried(tmp_path):
+    """A 403 will answer the same way however often it is asked, so fail fast."""
     attempts = {"n": 0}
 
     def handler(request):
         attempts["n"] += 1
         return httpx.Response(403, content=b"<Error>AccessDenied</Error>")
 
-    with pytest.raises(OSError, match="expired"):
+    with pytest.raises(OSError, match="rejected the signature"):
         download_file(_entry("https://s3.test/f"), tmp_path, client=_client(handler), retries=3)
 
     assert attempts["n"] == 1

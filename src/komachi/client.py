@@ -106,14 +106,15 @@ class KomachiClient:
             },
         )
 
-    def download_url(self, market: str, file_date: str, data_type: str) -> dict:
-        return self._request(
-            "POST",
-            "/api/download-url",
-            json={"market": market, "file_date": file_date, "data_type": data_type},
-        )
+    def download_link(self, market: str, file_date: str, data_type: str) -> str:
+        """A stable address for one file.
 
-    def refresh(self, dataset_file_id: str) -> dict:
-        return self._request(
-            "POST", "/api/download-url/refresh", json={"dataset_file_id": dataset_file_id}
-        )
+        Fetching it redirects to object storage. Renewal is the service's
+        business: an expired signature is replaced on the way through, so a
+        client never has to ask for one.
+        """
+        return f"{self.api_url}/api/download/{market}/{file_date}/{data_type}"
+
+    def auth_header(self) -> dict:
+        """For fetching a download link on a client this class does not own."""
+        return {"Authorization": f"Bearer {self.token}"}

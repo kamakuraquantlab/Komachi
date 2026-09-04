@@ -19,9 +19,9 @@ from .layout import data_path
 
 CHUNK_SIZE = 1024 * 1024
 
-# 408 and 429 are the only 4xx worth retrying. The rest -- above all the 403 an
-# expired pre-signed URL returns -- will answer the same way however many times
-# they are asked, so the buyer is pointed at `komachi refresh` instead.
+# 408 and 429 are the only 4xx worth retrying. The rest will answer the same
+# way however many times they are asked. Expiry is not among them: files are
+# fetched through the API, which signs at the moment of the request.
 _RETRYABLE_STATUSES = frozenset({408, 429})
 
 
@@ -76,7 +76,7 @@ def is_complete(path: Path, size_bytes: int | None, checksum: str | None) -> boo
     Public because a resumed download decides what to ask the API for by
     consulting the disk first. Checking here rather than after a URL has been
     issued is what makes resuming free: a file already present is never
-    requested, so it never spends a refresh.
+    requested, so it never opens a market-day.
     """
     if not path.exists():
         return False
@@ -96,7 +96,8 @@ def _describe(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
         if code == 403:
-            return "403 Forbidden -- the download URL has expired or is not valid any more"
+            return ("403 Forbidden -- object storage rejected the signature. "
+                    "Re-run the command; if it persists, contact support")
         if code == 404:
             return "404 Not Found -- the file is not in object storage; contact support"
         return f"HTTP {code} from object storage"
