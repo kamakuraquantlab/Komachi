@@ -49,6 +49,19 @@ def local_path(dest: Path, market: str, data_type: str, file_date: str) -> Path:
     return data_path(dest, market, data_type, file_date)
 
 
+def _parse_checksum(value: str) -> tuple[str, str]:
+    """Split "sha256:<hex>" into its algorithm and digest.
+
+    The catalogue records the algorithm alongside the digest so the format can
+    outlive sha256. A bare digest is accepted as sha256 for the same reason a
+    reader should be lenient about what it accepts.
+    """
+    if ":" in value:
+        algorithm, _, digest = value.partition(":")
+        return algorithm.lower(), digest.lower()
+    return "sha256", value.lower()
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -63,8 +76,10 @@ def _is_complete(path: Path, size_bytes: int | None, checksum: str | None) -> bo
         return False
     if size_bytes is not None and path.stat().st_size != size_bytes:
         return False
-    if checksum and _sha256(path) != checksum:
-        return False
+    if checksum:
+        algorithm, digest = _parse_checksum(checksum)
+        if algorithm != "sha256" or _sha256(path) != digest:
+            return False
     # With neither size nor checksum published there is nothing to check
     # against, so any existing file is taken at face value.
     return True
@@ -140,11 +155,18 @@ def download_file(
 
         verified = False
         if checksum:
-            actual = _sha256(partial)
-            if actual != checksum:
+            algorithm, digest = _parse_checksum(checksum)
+            if algorithm != "sha256":
                 partial.unlink(missing_ok=True)
                 raise DownloadFailed(
-                    f"Checksum mismatch for {path.name}: expected {checksum}, got {actual}"
+                    f"Unsupported checksum algorithm {algorithm!r} for {path.name}. "
+                    "This client verifies sha256 only; upgrade it."
+                )
+            actual = _sha256(partial)
+            if actual != digest:
+                partial.unlink(missing_ok=True)
+                raise DownloadFailed(
+                    f"Checksum mismatch for {path.name}: expected {digest}, got {actual}"
                 )
             verified = True
 

@@ -13,32 +13,25 @@ from pathlib import Path
 
 import httpx
 
-from komachi.client import DEFAULT_API_URL, ApiError, Credentials, KomachiClient
+from komachi.client import ApiError, KomachiClient
 from komachi.download import download_file
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
-from komachi.layout import DEFAULT_ROOT, local_inventory, root_path, view_sql
+from komachi.layout import local_inventory, view_sql
+from komachi.settings import DEFAULT_ROOT, ENV_FILE, TOKEN_FILE, resolve, save_token
 
 
-def _resolve_credentials(args) -> Credentials:
-    api_url = args.api_url or os.environ.get("KQL_API_URL")
-    token = args.token or os.environ.get("KQL_TOKEN")
-
-    if not token or not api_url:
-        stored = Credentials.load()
-        if stored:
-            token = token or stored.token
-            api_url = api_url or stored.api_url
-
-    if not token:
-        raise SystemExit(
-            "No token found. Pass --token, set KQL_TOKEN, or run:\n  komachi auth login --token <TOKEN>"
-        )
-    return Credentials(api_url=api_url or DEFAULT_API_URL, token=token)
+def _settings(args):
+    return resolve(getattr(args, "root", None), args.api_url, args.token)
 
 
 def _client(args) -> KomachiClient:
-    creds = _resolve_credentials(args)
-    return KomachiClient(creds.api_url, creds.token)
+    s = _settings(args)
+    if not s.token:
+        raise SystemExit(
+            "No token found. Pass --token, set KQL_TOKEN, or run:\n"
+            "  komachi auth login --token <TOKEN>"
+        )
+    return KomachiClient(s.api_url, s.token)
 
 
 def _human_bytes(n: int | None) -> str:
@@ -53,12 +46,14 @@ def _human_bytes(n: int | None) -> str:
 
 
 def cmd_auth_login(args) -> int:
-    api_url = args.api_url or os.environ.get("KQL_API_URL") or DEFAULT_API_URL
-    creds = Credentials(api_url=api_url, token=args.token)
-    with KomachiClient(creds.api_url, creds.token) as client:
+    # Resolving here rather than after the call, so a first-time user is asked
+    # for their data root once, at the moment they set the tool up.
+    s = resolve(getattr(args, "root", None), args.api_url, args.token)
+    with KomachiClient(s.api_url, args.token) as client:
         state = client.status()
-    creds.save()
+    save_token(args.token)
     print(f"Logged in. Product {state['product_id']}, valid until {state['valid_until']}.")
+    print(f"Token stored in {TOKEN_FILE} (0600). Data root is {s.root}.")
     return 0
 
 
@@ -97,7 +92,7 @@ def cmd_binance_import(args) -> int:
     """Download from Binance Vision and convert into the Kamakura Quant Lab schema."""
     from komachi import binance_vision
 
-    dest = root_path(args.root)
+    dest = _settings(args).root
     try:
         dates = binance_vision.date_range(args.start, args.end)
     except ValueError as exc:
@@ -129,6 +124,47 @@ def cmd_binance_import(args) -> int:
     print("\nNote: Binance Vision publishes spot trades but not L2 order book depth,")
     print("so only the Trade dataset can be produced from this source.")
     return 1 if failures else 0
+
+
+def cmd_catalog(args) -> int:
+    """What the seller holds for a market, with per-day quality.
+
+    Defaults to the most recent week rather than the whole archive: the common
+    question is "what is there now", and a market-year is 730 lines.
+    """
+    with _client(args) as client:
+        if args.start or args.end:
+            files = client.stats(args.market, start=args.start, end=args.end)
+            scope = f"{args.start or 'earliest'} .. {args.end or 'latest'}"
+        else:
+            files = client.stats(args.market, days=args.days)
+            scope = f"latest {args.days} day(s)"
+
+    if not files:
+        print(f"Nothing catalogued for {args.market} in {scope}.")
+        return 0
+
+    # One row per market-day, with the datasets folded in: a market-day is the
+    # unit a buyer spends, so it is the unit worth showing.
+    days: dict[str, dict] = {}
+    for f in files:
+        d = days.setdefault(f["file_date"], {"date": f["file_date"], "types": [], "bytes": 0,
+                                             "rows": 0, "missing": 0, "partial": False})
+        d["types"].append(f["data_type"])
+        d["bytes"] += f["size_bytes"] or 0
+        d["rows"] += f["row_count"] or 0
+        d["missing"] = max(d["missing"], f["missing_minutes"] or 0)
+        d["partial"] = d["partial"] or bool(f["partial"])
+
+    print(f"{args.market}   {scope}\n")
+    print(f"{'date':12} {'datasets':20} {'rows':>12} {'size':>9} {'gap':>6}  note")
+    for d in sorted(days.values(), key=lambda x: x["date"]):
+        note = "PARTIAL" if d["partial"] else ("" if d["missing"] < 60 else "sparse")
+        gap = f"{d['missing']}m" if d["missing"] else "-"
+        print(f"{d['date']:12} {','.join(sorted(d['types'])):20} {d['rows']:>12,} "
+              f"{_human_bytes(d["bytes"]):>9} {gap:>6}  {note}")
+    print(f"\n{len(days)} market-day(s). 'gap' is minutes with no record in the JST day.")
+    return 0
 
 
 def cmd_calendar(args) -> int:
@@ -178,7 +214,7 @@ def _confirm(estimate: dict) -> bool:
 
 
 def cmd_download(args) -> int:
-    dest = root_path(args.root)
+    dest = _settings(args).root
     with _client(args) as client:
         estimate = client.manifest(args.market, args.start, args.end, dry_run=True)
         if estimate["files"] == 0:
@@ -232,7 +268,7 @@ def cmd_refresh(args) -> int:
 
 def cmd_local(args) -> int:
     """What is already on disk, without calling the API."""
-    root = root_path(args.root)
+    root = _settings(args).root
     inventory = local_inventory(root)
     if not inventory:
         print(f"Nothing downloaded under {root} yet.")
@@ -246,7 +282,7 @@ def cmd_local(args) -> int:
 
 def cmd_duckdb(args) -> int:
     """Create or refresh a DuckDB database of views over the downloaded tree."""
-    root = root_path(args.root)
+    root = _settings(args).root
     db_path = Path(args.db).expanduser() if args.db else root / "kql.duckdb"
     try:
         counts = build_database(root, db_path)
@@ -273,7 +309,7 @@ def cmd_duckdb(args) -> int:
 
 def cmd_sql(args) -> int:
     """Print the view SQL, for use in an existing DuckDB session."""
-    print(view_sql(root_path(args.root)))
+    print(view_sql(_settings(args).root))
     return 0
 
 
@@ -321,9 +357,33 @@ def cmd_decode(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="komachi", description="Kamakura Quant Lab market data downloader")
+    parser = argparse.ArgumentParser(
+        prog="komachi",
+        description="Kamakura Quant Lab market data downloader",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+settings
+  Downloaded data goes under one root directory. On first use Komachi asks for
+  it and writes the answer to {ENV_FILE} in the current directory:
+
+      KQL_ROOT_PATH=<your data root>     default {DEFAULT_ROOT}
+      KQL_API_URL=<api address>
+
+  Edit that file to change either, or override per run with --root and
+  --api-url, or by setting ROOT_PATH or KQL_ROOT_PATH in the environment.
+
+  Your purchase token is kept separately in {TOKEN_FILE} at mode 0600, not in
+  {ENV_FILE}, so a data directory can be committed to git without leaking it.
+
+layout
+  <root>/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
+
+  Dates are Asia/Tokyo days; timestamps inside the files are UTC epochs.
+  Run 'komachi duckdb' after downloading to query it.
+""")
     parser.add_argument("--token", help="Purchase token; overrides KQL_TOKEN and stored config")
     parser.add_argument("--api-url", help="Kamakura Quant Lab API base URL")
+    parser.add_argument("--root", help=f"Data root; overrides {ENV_FILE}. Default {DEFAULT_ROOT}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     auth = sub.add_parser("auth", help="Manage stored credentials")
@@ -344,9 +404,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--symbol", required=True, help="Kamakura Quant Lab symbol, for example BTC_USDT")
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
-    p.add_argument("--root", help=f"Data root. Defaults to $ROOT_PATH, else {DEFAULT_ROOT}")
     p.add_argument("--force", action="store_true", help="Re-import days already present")
     p.set_defaults(func=cmd_binance_import)
+
+    p = sub.add_parser("catalog", help="What the seller holds for a market, with per-day quality")
+    p.add_argument("--market", required=True)
+    p.add_argument("--start", help="First JST date, inclusive")
+    p.add_argument("--end", help="Last JST date, inclusive")
+    p.add_argument("--days", type=int, default=7, help="Most recent N days when no range is given")
+    p.set_defaults(func=cmd_catalog)
 
     p = sub.add_parser("calendar", help="Show available and downloaded dates for a market")
     p.add_argument("--market", required=True)
@@ -364,7 +430,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--market", required=True)
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
-    p.add_argument("--root", help=f"Data root. Defaults to $ROOT_PATH, else {DEFAULT_ROOT}")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
     p.add_argument("--force", action="store_true", help="Re-download files already present")
     p.set_defaults(func=cmd_download)
@@ -374,16 +439,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_refresh)
 
     p = sub.add_parser("local", help="Show what is already downloaded")
-    p.add_argument("--root", help=f"Data root. Defaults to $ROOT_PATH, else {DEFAULT_ROOT}")
     p.set_defaults(func=cmd_local)
 
     p = sub.add_parser("duckdb", help="Create or refresh a DuckDB database over the downloaded tree")
-    p.add_argument("--root", help=f"Data root. Defaults to $ROOT_PATH, else {DEFAULT_ROOT}")
     p.add_argument("--db", help="Database file. Defaults to <root>/kql.duckdb")
     p.set_defaults(func=cmd_duckdb)
 
     p = sub.add_parser("sql", help="Print DuckDB view SQL for the downloaded tree")
-    p.add_argument("--root", help=f"Data root. Defaults to $ROOT_PATH, else {DEFAULT_ROOT}")
     p.set_defaults(func=cmd_sql)
 
     p = sub.add_parser("stats", help="Row count and time range for a local file")

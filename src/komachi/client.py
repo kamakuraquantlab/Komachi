@@ -82,6 +82,18 @@ class KomachiClient:
     def calendar(self, market: str) -> list[dict]:
         return self._request("GET", "/api/datasets/calendar", params={"market": market})["days"]
 
+    def stats(self, market: str, start: str | None = None, end: str | None = None,
+              days: int | None = None) -> list[dict]:
+        """Per-file quality from the catalogue: rows, size, missing minutes."""
+        params: dict = {"market": market}
+        if start:
+            params["start"] = start
+        if end:
+            params["end"] = end
+        if days:
+            params["days"] = days
+        return self._request("GET", "/api/datasets/stats", params=params)["files"]
+
     def manifest(self, market: str, start_date: str, end_date: str, dry_run: bool = False) -> dict:
         return self._request(
             "POST",

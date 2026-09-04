@@ -173,3 +173,31 @@ def test_server_error_is_retried(tmp_path):
 
     assert attempts["n"] == 3
     assert result.path.read_bytes() == b"ok"
+
+
+def test_a_prefixed_checksum_from_the_catalogue_verifies(tmp_path):
+    """Kitakamakura records "sha256:<hex>"; a bare comparison rejects every file."""
+    payload = b"parquet-bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    client = _client(lambda request: httpx.Response(200, content=payload))
+
+    result = download_file(
+        _entry("https://s3.test/f", checksum=f"sha256:{digest}"), tmp_path, client=client
+    )
+    assert result.verified is True
+
+
+def test_a_bare_checksum_still_verifies(tmp_path):
+    payload = b"parquet-bytes"
+    client = _client(lambda request: httpx.Response(200, content=payload))
+    result = download_file(
+        _entry("https://s3.test/f", checksum=hashlib.sha256(payload).hexdigest()),
+        tmp_path, client=client,
+    )
+    assert result.verified is True
+
+
+def test_an_unknown_algorithm_is_refused_not_ignored(tmp_path):
+    client = _client(lambda request: httpx.Response(200, content=b"x"))
+    with pytest.raises(OSError, match="Unsupported checksum algorithm"):
+        download_file(_entry("https://s3.test/f", checksum="blake3:abc"), tmp_path, client=client)
