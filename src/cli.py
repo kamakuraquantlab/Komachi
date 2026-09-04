@@ -17,7 +17,7 @@ import httpx
 from komachi.client import ApiError, KomachiClient
 from komachi.download import already_have, download_file
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
-from komachi.layout import local_inventory, view_sql
+from komachi.layout import data_path, local_inventory, view_sql
 from komachi.settings import DEFAULT_ROOT, ENV_FILE, TOKEN_FILE, resolve, save_token
 from komachi.weeks import describe, shapes
 
@@ -176,23 +176,47 @@ def cmd_catalog(args) -> int:
 
 
 def cmd_calendar(args) -> int:
+    """Every catalogued day for a market, and where each one stands.
+
+    Four states, and keeping them apart matters. "Owned" and "on disk" were
+    previously one label called "downloaded", which is wrong in both
+    directions: a market-day is paid for when its first URL is issued, whether
+    or not the bytes ever arrived, and a buyer who deletes a file still owns
+    the day and can fetch it again for nothing.
+    """
+    root = _settings(args).root
     with _client(args) as client:
         days = client.calendar(args.market)
     if not days:
-        print(f"No data registered for {args.market}.")
+        print(f"Nothing catalogued for {args.market}.")
         return 0
-    print(f"{'date':12} {'state':12} data types")
+
+    counts = {"on disk": 0, "owned": 0, "available": 0, "-": 0}
+    print(f"{'date':12} {'state':11} {'quality':10} datasets")
     for day in days:
-        if day["consumed"]:
-            state = "downloaded"
-        elif day["available"]:
+        if not day["available"]:
+            state = "-"
+        elif not day["consumed"]:
             state = "available"
+        elif all(
+            data_path(root, args.market, dt, day["file_date"]).is_file()
+            for dt in day["data_types"]
+        ):
+            state = "on disk"
         else:
-            state = "unavailable"
-        print(f"{day['file_date']:12} {state:12} {', '.join(day['data_types']) or '-'}")
-    consumed = sum(1 for d in days if d["consumed"])
-    available = sum(1 for d in days if d["available"])
-    print(f"\n{available} available, {consumed} already downloaded.")
+            state = "owned"
+        counts[state] += 1
+
+        gap = day.get("missing_minutes") or 0
+        quality = "PARTIAL" if day.get("partial") else (f"{gap}m gap" if gap >= 60 else "")
+        print(f"{day['file_date']:12} {state:11} {quality:10} {', '.join(day['data_types']) or '-'}")
+
+    print(f"\n{counts['on disk']} on disk, {counts['owned']} owned but not fetched, "
+          f"{counts['available']} available to unlock, {counts['-']} not published.")
+    if counts["available"]:
+        print(f"Unlocking all {counts['available']} would cost {counts['available']} market-day(s).")
+    if counts["owned"]:
+        print(f"The {counts['owned']} owned day(s) are already paid for: fetching them costs nothing.")
     return 0
 
 
