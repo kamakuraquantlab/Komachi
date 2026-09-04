@@ -201,3 +201,60 @@ def test_an_unknown_algorithm_is_refused_not_ignored(tmp_path):
     client = _client(lambda request: httpx.Response(200, content=b"x"))
     with pytest.raises(OSError, match="Unsupported checksum algorithm"):
         download_file(_entry("https://s3.test/f", checksum="blake3:abc"), tmp_path, client=client)
+
+
+# ---- resuming ---------------------------------------------------------------
+
+
+def test_already_have_recognises_a_complete_file(tmp_path):
+    """What a resumed run consults before asking the API for anything."""
+    from komachi.download import already_have
+
+    payload = b"parquet-bytes"
+    entry = _entry("https://s3.test/f", size_bytes=len(payload),
+                   checksum=f"sha256:{hashlib.sha256(payload).hexdigest()}")
+    assert already_have(entry, tmp_path) is False
+
+    path = local_path(tmp_path, entry["market"], entry["data_type"], entry["file_date"])
+    path.parent.mkdir(parents=True)
+    path.write_bytes(payload)
+    assert already_have(entry, tmp_path) is True
+
+
+def test_a_truncated_file_is_not_treated_as_complete(tmp_path):
+    """An interrupted write leaves a short file. Trusting it would give the
+    buyer a silently incomplete day."""
+    from komachi.download import already_have
+
+    entry = _entry("https://s3.test/f", size_bytes=5_000)
+    path = local_path(tmp_path, entry["market"], entry["data_type"], entry["file_date"])
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"x" * 100)
+
+    assert already_have(entry, tmp_path) is False
+
+
+def test_a_corrupted_file_is_not_treated_as_complete(tmp_path):
+    from komachi.download import already_have
+
+    payload = b"right"
+    entry = _entry("https://s3.test/f", size_bytes=len(payload),
+                   checksum=f"sha256:{hashlib.sha256(payload).hexdigest()}")
+    path = local_path(tmp_path, entry["market"], entry["data_type"], entry["file_date"])
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"wrong")  # same length, different bytes
+
+    assert already_have(entry, tmp_path) is False
+
+
+def test_a_file_with_no_published_checksum_is_taken_at_face_value(tmp_path):
+    """There is nothing to check against, so an existing file is accepted
+    rather than re-fetched forever."""
+    from komachi.download import already_have
+
+    entry = _entry("https://s3.test/f")
+    path = local_path(tmp_path, entry["market"], entry["data_type"], entry["file_date"])
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"anything")
+
+    assert already_have(entry, tmp_path) is True

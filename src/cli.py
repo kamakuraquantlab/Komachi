@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 
 from komachi.client import ApiError, KomachiClient
-from komachi.download import download_file
+from komachi.download import already_have, download_file
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
 from komachi.layout import local_inventory, view_sql
 from komachi.settings import DEFAULT_ROOT, ENV_FILE, TOKEN_FILE, resolve, save_token
@@ -224,17 +224,49 @@ def _confirm(estimate: dict) -> bool:
 
 
 def cmd_download(args) -> int:
+    """Download a range, continuing wherever a previous run stopped.
+
+    Three things make an interrupted run resumable rather than restartable.
+
+    The disk is consulted before the API. `stats` lists what exists with sizes
+    and checksums and costs nothing, so files already complete are dropped from
+    the plan and never have a URL issued for them. Resuming therefore spends no
+    part of the five-refresh budget on work already done.
+
+    URLs are minted one at a time, immediately before the file they unlock. The
+    old flow asked for the whole range up front, which is fine for a week and
+    wrong for a hundred days: a pre-signed URL lives an hour, and 3.5 GB over a
+    domestic link does not finish in one, so the tail of the manifest expired
+    before it was ever used.
+
+    A failure does not stop the run. Whatever succeeded stays on disk and
+    counts next time.
+    """
     dest = _settings(args).root
     start, end = _range(args)
+
     with _client(args) as client:
-        estimate = client.manifest(args.market, start, end, dry_run=True)
-        if estimate["files"] == 0:
+        # Free: reads the catalogue, issues nothing, consumes nothing.
+        catalogued = client.stats(args.market, start=start, end=end)
+        if not catalogued:
             print(f"No files available for {args.market} between {start} and {end}.")
             return 0
+
+        pending = [e for e in catalogued if args.force or not already_have(e, dest)]
+        have = len(catalogued) - len(pending)
+
+        if not pending:
+            print(f"All {len(catalogued)} file(s) for {args.market} {start}..{end} are already "
+                  f"present and verified. Nothing to do.")
+            return 0
+        if have:
+            print(f"{have} of {len(catalogued)} file(s) already present; continuing with {len(pending)}.\n")
+
+        estimate = client.manifest(args.market, start, end, dry_run=True)
         if not estimate["sufficient"]:
             print(
-                f"Not enough grant remaining: need {estimate['new_market_days']} market-day(s), "
-                f"have {estimate['remaining_market_days']}.",
+                f"Not enough allowance: this needs {estimate['new_market_days']} market-day(s), "
+                f"{estimate['remaining_market_days']} remaining.",
                 file=sys.stderr,
             )
             return 1
@@ -242,30 +274,29 @@ def cmd_download(args) -> int:
             print("Cancelled.")
             return 0
 
-        result = client.manifest(args.market, start, end)
-
-    entries = result["files"]
-    failures = 0
-    with httpx.Client(timeout=120.0, follow_redirects=True) as http:
-        for index, entry in enumerate(entries, start=1):
-            label = f"[{index}/{len(entries)}] {entry['file_date']} {entry['data_type']}"
-            try:
-                outcome = download_file(entry, dest, client=http, force=args.force)
-            except Exception as exc:
-                failures += 1
-                print(f"{label} FAILED: {exc}", file=sys.stderr)
-                print(f"    retry with: komachi refresh --file {entry['dataset_file_id']}", file=sys.stderr)
-                continue
-            if outcome.skipped:
-                print(f"{label} already present, skipped")
-            else:
+        failures = []
+        with httpx.Client(timeout=120.0, follow_redirects=True) as http:
+            for index, item in enumerate(pending, start=1):
+                label = f"[{index}/{len(pending)}] {item['file_date']} {item['data_type']}"
+                try:
+                    # Minted here so it is seconds old when it is used.
+                    entry = client.download_url(args.market, item["file_date"], item["data_type"])
+                    outcome = download_file(entry, dest, client=http, force=args.force)
+                except Exception as exc:
+                    failures.append(item)
+                    print(f"{label} FAILED: {exc}", file=sys.stderr)
+                    continue
                 verified = " verified" if outcome.verified else ""
-                print(f"{label} {_human_bytes(outcome.bytes_written)}{verified} -> {outcome.path}")
+                print(f"{label} {_human_bytes(outcome.bytes_written)}{verified}")
 
-    print(f"\n{len(entries) - failures}/{len(entries)} file(s) downloaded into {dest}")
-    if failures == 0:
-        print("Query it with:  komachi duckdb")
-    return 1 if failures else 0
+    done = len(pending) - len(failures)
+    print(f"\n{done}/{len(pending)} file(s) downloaded into {dest}")
+    if failures:
+        print(f"{len(failures)} failed. Re-run the same command to continue; what "
+              f"succeeded is kept and will not be paid for again.", file=sys.stderr)
+        return 1
+    print("Query it with:  komachi duckdb")
+    return 0
 
 
 def cmd_refresh(args) -> int:

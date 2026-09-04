@@ -70,8 +70,14 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _is_complete(path: Path, size_bytes: int | None, checksum: str | None) -> bool:
-    """Whether an existing local file already satisfies the manifest entry."""
+def is_complete(path: Path, size_bytes: int | None, checksum: str | None) -> bool:
+    """Whether an existing local file already satisfies the catalogue entry.
+
+    Public because a resumed download decides what to ask the API for by
+    consulting the disk first. Checking here rather than after a URL has been
+    issued is what makes resuming free: a file already present is never
+    requested, so it never spends a refresh.
+    """
     if not path.exists():
         return False
     if size_bytes is not None and path.stat().st_size != size_bytes:
@@ -97,6 +103,12 @@ def _describe(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def already_have(entry: dict, dest: Path) -> bool:
+    """Whether this catalogue entry is satisfied on disk."""
+    path = local_path(dest, entry["market"], entry["data_type"], entry["file_date"])
+    return is_complete(path, entry.get("size_bytes"), entry.get("checksum"))
+
+
 def download_file(
     entry: dict,
     dest: Path,
@@ -110,7 +122,7 @@ def download_file(
     size_bytes = entry.get("size_bytes")
     checksum = entry.get("checksum")
 
-    if not force and _is_complete(path, size_bytes, checksum):
+    if not force and is_complete(path, size_bytes, checksum):
         return DownloadResult(path=path, skipped=True, bytes_written=0, verified=bool(checksum))
 
     path.parent.mkdir(parents=True, exist_ok=True)
