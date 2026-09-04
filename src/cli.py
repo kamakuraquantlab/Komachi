@@ -205,9 +205,6 @@ def cmd_manifest(args) -> int:
             print(f"{estimate['files']} file(s) across {estimate['new_market_days']} new market-day(s).")
             print(f"Remaining after this request: "
                   f"{estimate['remaining_market_days'] - estimate['new_market_days']}")
-            if not estimate["sufficient"]:
-                print("Not enough market-days remain for this range.", file=sys.stderr)
-                return 1
             return 0
         result = client.manifest(args.market, start, end)
     for entry in result["files"]:
@@ -217,86 +214,61 @@ def cmd_manifest(args) -> int:
     return 0
 
 
-def _show_plan(market, start, end, catalogued, pending, have, estimate, remaining) -> bool:
-    """Show what the run will do before it does any of it.
+def _show_plan(market, start, end, catalogued, pending, estimate, remaining) -> None:
+    """What the run will do, before it does any of it.
 
-    Everything here is known without issuing a URL or spending anything, so the
-    buyer sees the range, the volume and the cost and then decides. Returns
-    False when the allowance cannot cover it.
+    Everything here comes from the catalogue, so it is known without issuing a
+    URL or spending anything. Whether the allowance actually covers it is the
+    service's decision, not this one's: it refuses per file, and refusing here
+    too would only be a second opinion that can be wrong.
     """
     days = len({e["file_date"] for e in catalogued})
+    have = len(catalogued) - len(pending)
     spend = estimate["new_market_days"]
-    to_fetch = sum(e["size_bytes"] or 0 for e in pending)
 
     print(f"Market      {market}")
     print(f"Dates       {start} .. {end}   ({days} day{'s' if days != 1 else ''}, JST)")
-    print(f"Files       {len(pending)} to download" + (f", {have} already present" if have else ""))
-    print(f"Size        {_human_bytes(to_fetch)}")
-    print(f"Cost        {spend} market-day(s)"
-          + (f", {describe(spend)}" if spend >= 7 else "")
-          + f"; {remaining} remaining now, {remaining - spend} afterwards")
-
-    # A market-day is charged once. Re-fetching one already opened costs
-    # nothing, and without saying so a cost of zero for seven days reads as a
-    # bug rather than as the buyer getting what they already paid for.
-    free = days - spend
-    if free > 0:
-        print(f"{'':12}{free} of those day(s) are already paid for on this token")
-    if have:
-        print(f"{'':12}{have} file(s) already on disk will not be fetched again")
-
-    if not estimate["sufficient"]:
-        print(f"\nNot enough allowance: this needs {spend} and {remaining} remain.", file=sys.stderr)
-        print(f"Ask for fewer days:  --days {remaining}", file=sys.stderr)
-        return False
-    return True
+    print(f"Files       {len(pending)} to download"
+          + (f", {have} already present" if have else "")
+          + f", {_human_bytes(sum(e['size_bytes'] or 0 for e in pending))}")
+    print(f"Cost        {spend} of {remaining} remaining market-day(s)")
 
 
 def cmd_download(args) -> int:
-    """Download a range, continuing wherever a previous run stopped.
+    """Download from a start date, continuing wherever a previous run stopped.
 
-    Three things make an interrupted run resumable rather than restartable.
+    Two things make an interrupted run resumable rather than restartable.
 
     The disk is consulted before the API. `stats` lists what exists with sizes
-    and checksums and costs nothing, so files already complete are dropped from
-    the plan and never have a URL issued for them. Resuming therefore spends no
-    part of the five-refresh budget on work already done.
+    and checksums, and costs nothing, so a file already complete is dropped
+    from the plan and never has a URL issued for it. That is the one rule this
+    side has to keep: a re-run cannot spend a market-day that was already paid
+    for. Everything else about entitlement is the service's to decide.
 
     URLs are minted one at a time, immediately before the file they unlock. The
     old flow asked for the whole range up front, which is fine for a week and
     wrong for a hundred days: a pre-signed URL lives an hour, and 3.5 GB over a
     domestic link does not finish in one, so the tail of the manifest expired
     before it was ever used.
-
-    A failure does not stop the run. Whatever succeeded stays on disk and
-    counts next time.
     """
     dest = _settings(args).root
 
     with _client(args) as client:
-        state = client.status()
-        remaining = state["remaining_market_days"]
-        if remaining < 1 and not args.days:
-            print(f"No allowance remaining on this token ({state['product_id']}).", file=sys.stderr)
-            return 1
+        remaining = client.status()["remaining_market_days"]
 
-        # stats reads the catalogue: it issues nothing and consumes nothing.
+        # stats reads the catalogue: it issues no URL and spends nothing.
         catalogued, start, end = _plan(client, args, remaining)
         if not catalogued:
-            print(f"No data catalogued for {args.market} from {args.start}.")
+            print(f"Nothing catalogued for {args.market} from {args.start}.")
             return 0
 
         pending = [e for e in catalogued if args.force or not already_have(e, dest)]
-        have = len(catalogued) - len(pending)
-
         if not pending:
-            print(f"All {len(catalogued)} file(s) for {args.market} {start}..{end} are already "
-                  f"present and verified. Nothing to do.")
+            print(f"All {len(catalogued)} file(s) for {start}..{end} are present. Nothing to do.")
             return 0
+
         estimate = client.manifest(args.market, start, end, dry_run=True)
-        ok = _show_plan(args.market, start, end, catalogued, pending, have, estimate, remaining)
-        if not ok:
-            return 1
+        _show_plan(args.market, start, end, catalogued, pending, estimate, remaining)
         if not args.yes and input("\nContinue? [y/N] ").strip().lower() not in ("y", "yes"):
             print("Cancelled.")
             return 0
@@ -427,26 +399,17 @@ def cmd_decode(args) -> int:
 
 
 def _plan(client, args, remaining: int) -> tuple[list[dict], str, str]:
-    """Decide what a run covers, and over which dates.
+    """What the run covers, and over which dates.
 
-    Without `--days` it takes as many days as the allowance could pay for,
-    counting each as if it were unpaid. Days already consumed cost nothing, so
-    a run may finish with allowance to spare. Erring that way means the command
-    never spends more than the buyer was shown, and a leftover is visible
-    rather than an overdraft.
+    Without `--days` it spans as many days as the remaining allowance could pay
+    for. The range is then reported as the dates the catalogue actually holds,
+    so the summary does not overstate a span that runs across a gap.
     """
-    span = args.days if args.days else remaining
-    if span < 1:
-        return [], args.start, args.start
-
-    first = date.fromisoformat(args.start)
-    last = (first + timedelta(days=span - 1)).isoformat()
-
+    span = args.days or remaining
+    last = (date.fromisoformat(args.start) + timedelta(days=max(span, 1) - 1)).isoformat()
     catalogued = client.stats(args.market, start=args.start, end=last)
     if not catalogued:
         return [], args.start, last
-    # Clamp to what the catalogue holds: asking for 21 days across a gap should
-    # report the dates that exist rather than a range that overstates them.
     dates = sorted({e["file_date"] for e in catalogued})
     return catalogued, dates[0], dates[-1]
 

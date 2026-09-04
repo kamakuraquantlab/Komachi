@@ -75,32 +75,27 @@ def test_an_empty_catalogue_plans_nothing():
     assert files == []
 
 
-def test_a_spent_allowance_plans_nothing():
-    client = FakeClient(dates=WEEK, remaining=0)
-    files, _, _ = cli._plan(client, Args(), remaining=0)
-    assert files == []
-    assert client.stats_calls == []      # nothing was even asked of the API
-
-
-def test_the_plan_is_shown_and_refused_when_the_allowance_is_short(capsys):
+def test_the_plan_shows_range_size_and_cost(capsys):
+    """The summary is the whole of the client's judgement: it reports, and the
+    service decides whether the allowance covers it."""
     catalogued = [{"file_date": d, "size_bytes": 1000} for d in WEEK]
-    estimate = {"new_market_days": 7, "sufficient": False, "remaining_market_days": 3}
+    estimate = {"new_market_days": 7, "remaining_market_days": 21}
 
-    ok = cli._show_plan("COINCHECK:BTC_SPOT", WEEK[0], WEEK[-1], catalogued,
-                        catalogued, 0, estimate, remaining=3)
-
-    assert ok is False
-    err = capsys.readouterr().err
-    assert "--days 3" in err        # tells the buyer how to ask for less
-
-
-def test_a_zero_cost_is_explained(capsys):
-    """Seven days for nothing reads as a bug unless the reason is given."""
-    catalogued = [{"file_date": d, "size_bytes": 1000} for d in WEEK]
-    estimate = {"new_market_days": 0, "sufficient": True, "remaining_market_days": 21}
-
-    cli._show_plan("COINCHECK:BTC_SPOT", WEEK[0], WEEK[-1], catalogued,
-                   catalogued, 0, estimate, remaining=21)
+    cli._show_plan("COINCHECK:BTC_SPOT", WEEK[0], WEEK[-1], catalogued, catalogued, estimate, 21)
 
     out = capsys.readouterr().out
-    assert "already paid for on this token" in out
+    assert "COINCHECK:BTC_SPOT" in out
+    assert f"{WEEK[0]} .. {WEEK[-1]}" in out
+    assert "7 days" in out
+    assert "7 of 21 remaining" in out
+
+
+def test_files_already_present_are_reported_and_not_counted_to_fetch(capsys):
+    catalogued = [{"file_date": d, "size_bytes": 1000} for d in WEEK]
+    pending = catalogued[3:]
+    estimate = {"new_market_days": 4, "remaining_market_days": 21}
+
+    cli._show_plan("COINCHECK:BTC_SPOT", WEEK[0], WEEK[-1], catalogued, pending, estimate, 21)
+
+    out = capsys.readouterr().out
+    assert "4 to download, 3 already present" in out

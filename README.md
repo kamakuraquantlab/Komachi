@@ -77,21 +77,24 @@ is fetched it shows what the run will do:
 ```
 Market      COINCHECK:BTC_SPOT
 Dates       2025-07-01 .. 2025-07-07   (7 days, JST)
-Files       14 to download
-Size        207.7MB
-Cost        7 market-day(s); 21 remaining now, 14 afterwards
+Files       14 to download, 207.7MB
+Cost        7 of 21 remaining market-day(s)
 ```
 
-Everything in that summary is known without issuing a URL or spending
-anything, so you can see the range, the volume and the cost and then decide.
+Everything in that summary comes from the catalogue, so it is known without
+issuing a URL or spending anything.
+
+Komachi does not second-guess your entitlement. Whether the allowance covers a
+request is the service's decision, made per file; a client-side opinion could
+only be a duplicate that is sometimes wrong. What Komachi does guarantee is
+that it never spends more than it needs to.
 
 ## Interrupted downloads resume
 
 Re-run the same command. Files already complete are recognised from their size
-and checksum, dropped from the plan before any URL is requested, and so cost
-neither allowance nor part of the five-refresh budget. A market-day is charged
-once: fetching a day you have already opened is free, and the summary says so
-rather than showing an unexplained cost of zero.
+and checksum and dropped from the plan before any URL is requested, so they
+cost neither allowance nor part of the five-refresh budget. That check is the
+one thing this side has to get right.
 
 URLs are issued one at a time, immediately before the file they unlock. A
 pre-signed URL lives an hour, which is ample for one file and not for a
