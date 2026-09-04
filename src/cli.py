@@ -18,6 +18,7 @@ from komachi.download import download_file
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
 from komachi.layout import local_inventory, view_sql
 from komachi.settings import DEFAULT_ROOT, ENV_FILE, TOKEN_FILE, resolve, save_token
+from komachi.weeks import describe, shapes, week_range
 
 
 def _settings(args):
@@ -60,15 +61,21 @@ def cmd_auth_login(args) -> int:
 def cmd_status(args) -> int:
     with _client(args) as client:
         state = client.status()
-    markets = ", ".join(state["markets"]) if state["markets"] else "none registered"
+    granted, remaining = state["granted_market_days"], state["remaining_market_days"]
     print(f"Product        {state['product_id']}")
     print(f"Token status   {state['token_status']}")
     print(f"Valid until    {state['valid_until']}")
-    print(f"Markets        {markets}{' (all markets)' if state['all_markets'] else ''}")
+    print(f"Allowance      {granted} market-days  ({describe(granted)})")
+    print(f"Remaining      {remaining} market-days  ({describe(remaining)})")
     if state["start_date"] or state["end_date"]:
         print(f"Date window    {state['start_date'] or 'any'} .. {state['end_date'] or 'any'}")
-    print(f"Market-days    {state['used_market_days']} used, {state['remaining_market_days']} remaining"
-          f" of {state['granted_market_days']}")
+
+    for i, option in enumerate(shapes(remaining, markets=max(len(state["markets"]), 1))):
+        print(f"{'Spend it as' if i == 0 else '':<15}{option}")
+
+    print(f"\nMarkets        {', '.join(state['markets']) or 'none catalogued'}")
+    print("\nA market-day is one market on one date, covering every dataset published for it.")
+    print("The allowance is not tied to a market: spend it wherever you like.")
     return 0
 
 
@@ -189,9 +196,10 @@ def cmd_calendar(args) -> int:
 
 
 def cmd_manifest(args) -> int:
+    start, end = _range(args)
     with _client(args) as client:
         if args.dry_run:
-            estimate = client.manifest(args.market, args.start, args.end, dry_run=True)
+            estimate = client.manifest(args.market, start, end, dry_run=True)
             print(f"{estimate['files']} file(s) across {estimate['new_market_days']} new market-day(s).")
             print(f"Remaining after this request: "
                   f"{estimate['remaining_market_days'] - estimate['new_market_days']}")
@@ -199,7 +207,7 @@ def cmd_manifest(args) -> int:
                 print("Not enough market-days remain for this range.", file=sys.stderr)
                 return 1
             return 0
-        result = client.manifest(args.market, args.start, args.end)
+        result = client.manifest(args.market, start, end)
     for entry in result["files"]:
         print(entry["url"] if args.urls_only else
               f"{entry['file_date']} {entry['data_type']:10} {_human_bytes(entry['size_bytes']):>8}"
@@ -208,17 +216,20 @@ def cmd_manifest(args) -> int:
 
 
 def _confirm(estimate: dict) -> bool:
-    print(f"This will consume {estimate['new_market_days']} market-day(s) of "
-          f"{estimate['remaining_market_days']} remaining, across {estimate['files']} file(s).")
+    spend = estimate["new_market_days"]
+    left = estimate["remaining_market_days"] - spend
+    print(f"This spends {spend} market-day(s) ({describe(spend)}) across {estimate['files']} file(s).")
+    print(f"Remaining afterwards: {left} ({describe(left)}).")
     return input("Continue? [y/N] ").strip().lower() in ("y", "yes")
 
 
 def cmd_download(args) -> int:
     dest = _settings(args).root
+    start, end = _range(args)
     with _client(args) as client:
-        estimate = client.manifest(args.market, args.start, args.end, dry_run=True)
+        estimate = client.manifest(args.market, start, end, dry_run=True)
         if estimate["files"] == 0:
-            print(f"No files available for {args.market} between {args.start} and {args.end}.")
+            print(f"No files available for {args.market} between {start} and {end}.")
             return 0
         if not estimate["sufficient"]:
             print(
@@ -231,7 +242,7 @@ def cmd_download(args) -> int:
             print("Cancelled.")
             return 0
 
-        result = client.manifest(args.market, args.start, args.end)
+        result = client.manifest(args.market, start, end)
 
     entries = result["files"]
     failures = 0
@@ -356,6 +367,30 @@ def cmd_decode(args) -> int:
     return 0
 
 
+def _end_or_weeks(p) -> None:
+    """A range is given as whole weeks, or as an explicit end date.
+
+    `--weeks` is listed first because the products are sold in weeks and that
+    is the shape a buyer is thinking in. `--end` stays because someone topping
+    up an odd gap should not have to do arithmetic to ask for four days.
+    """
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--weeks", type=int, help="Whole weeks from --start. The usual way to ask")
+    group.add_argument("--end", help="Explicit last JST date, inclusive")
+
+
+def _range(args) -> tuple[str, str]:
+    """Resolve a range without moving the start.
+
+    A buyer asking for four weeks from a Wednesday means twenty-eight days from
+    that Wednesday. Snapping to a Monday would spend their allowance somewhere
+    they did not ask for.
+    """
+    if getattr(args, "weeks", None):
+        return week_range(args.start, args.weeks)
+    return args.start, args.end
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="komachi",
@@ -421,15 +456,15 @@ layout
     p = sub.add_parser("manifest", help="Generate temporary URLs for a date range")
     p.add_argument("--market", required=True)
     p.add_argument("--start", required=True)
-    p.add_argument("--end", required=True)
+    _end_or_weeks(p)
     p.add_argument("--dry-run", action="store_true", help="Report cost without consuming the grant")
     p.add_argument("--urls-only", action="store_true", help="Print bare URLs, for wget or aria2c")
     p.set_defaults(func=cmd_manifest)
 
-    p = sub.add_parser("download", help="Download a date range for one market")
+    p = sub.add_parser("download", help="Download whole weeks, or an explicit range")
     p.add_argument("--market", required=True)
     p.add_argument("--start", required=True)
-    p.add_argument("--end", required=True)
+    _end_or_weeks(p)
     p.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
     p.add_argument("--force", action="store_true", help="Re-download files already present")
     p.set_defaults(func=cmd_download)
