@@ -51,18 +51,55 @@ def test_millisecond_and_microsecond_timestamps_both_normalise():
     assert ms[0]["ts"] == us[0]["ts"] == 1767225600.0
 
 
+def _serving(per_date: dict) -> httpx.Client:
+    """Serve one zip per source date; 404 for anything else."""
+    def handler(request):
+        for date, payload in per_date.items():
+            if date in str(request.url):
+                return httpx.Response(200, content=payload)
+        return httpx.Response(404)
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+# 2026-01-01 00:00 UTC is 09:00 JST the same day; 23:00 UTC is 08:00 JST the next.
+_UTC_MORNING = "1,50000.0,0.5,25000.0,1767225600000,true,true"    # 2026-01-01 00:00Z
+_UTC_EVENING = "2,50001.0,0.25,12500.0,1767308400000,false,true"  # 2026-01-01 23:00Z
+
+
+def test_a_source_day_is_re_cut_onto_jst_days(tmp_path):
+    """A Binance archive spans two JST days, and must not be filed under one.
+
+    The source day starts at 00:00 UTC, nine hours into the JST day of the
+    same date, so its evening rows belong to the next JST day. Filing the
+    whole archive under its own date would offset imported data from
+    purchased data by nine hours, silently.
+    """
+    client = _serving({
+        "2026-01-01": _zip_of([_UTC_MORNING, _UTC_EVENING]),
+        "2025-12-31": _zip_of(["3,49000.0,1.0,49000.0,1767196800000,true,true"]),  # 2025-12-31 12:00Z
+    })
+
+    results = binance_vision.import_range("BTC_USDT", "2026-01-01", "2026-01-01", tmp_path,
+                                          client=client)
+
+    assert [r.file_date for r in results] == ["2026-01-01"]
+    # 16:00Z on the 31st is 01:00 JST on the 1st, so it belongs to this day even
+    # though it came from the previous archive. 23:00Z on the 1st is 08:00 JST on
+    # the 2nd, so it does not.
+    assert results[0].rows == 2
+
+
 def test_import_writes_the_warehouse_layout(tmp_path):
-    payload = _zip_of(
-        [
-            "1,50000.0,0.5,25000.0,1767225600000,true,true",
-            "2,50001.0,0.25,12500.0,1767225601000,false,true",
-        ]
-    )
+    client = _serving({
+        "2026-01-01": _zip_of([_UTC_MORNING]),
+        "2025-12-31": _zip_of(["3,49000.0,1.0,49000.0,1767196800000,true,true"]),
+    })
 
-    result = binance_vision.import_day("BTC_USDT", "2026-01-01", tmp_path, client=_client(payload))
+    results = binance_vision.import_range("BTC_USDT", "2026-01-01", "2026-01-01", tmp_path,
+                                          client=client)
 
-    assert result.rows == 2
-    assert result.path.relative_to(tmp_path).as_posix() == (
+    assert results[0].path.relative_to(tmp_path).as_posix() == (
         "bronze/dataset=Trade/exchange=BINANCE/symbol=BTC_USDT/date=2026-01-01/data.parquet"
     )
 
@@ -70,17 +107,20 @@ def test_import_writes_the_warehouse_layout(tmp_path):
 def test_imported_file_matches_the_trade_schema(tmp_path):
     """The whole point: both sources load through one reader."""
     pq = pytest.importorskip("pyarrow.parquet")
-    payload = _zip_of(["1,50000.0,0.5,25000.0,1767225600000,true,true"])
+    client = _serving({
+        "2026-01-01": _zip_of([_UTC_MORNING]),
+        "2025-12-31": _zip_of(["3,49000.0,1.0,49000.0,1767196800000,true,true"]),
+    })
 
-    result = binance_vision.import_day("BTC_USDT", "2026-01-01", tmp_path, client=_client(payload))
-    table = pq.read_table(result.path)
+    results = binance_vision.import_range("BTC_USDT", "2026-01-01", "2026-01-01", tmp_path,
+                                          client=client)
+    table = pq.read_table(results[0].path)
 
     # The data columns match the Trade schema, and pyarrow additionally recovers
     # dataset/exchange/symbol/date from the Hive path -- the same discovery that
     # works against the parquet warehouse, which is the point.
     assert table.column_names[:4] == ["ts", "side", "price", "size"]
     assert {"dataset", "exchange", "symbol", "date"} <= set(table.column_names)
-    assert table.num_rows == 1
 
 
 def test_existing_day_is_skipped(tmp_path):
@@ -91,17 +131,22 @@ def test_existing_day_is_skipped(tmp_path):
     def handler(request):  # pragma: no cover - must not be reached
         raise AssertionError("should not have been fetched")
 
-    result = binance_vision.import_day(
-        "BTC_USDT", "2026-01-01", tmp_path,
+    results = binance_vision.import_range(
+        "BTC_USDT", "2026-01-01", "2026-01-01", tmp_path,
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
-    assert result.skipped is True
+    assert [r.skipped for r in results] == [True]
 
 
-def test_missing_archive_explains_itself(tmp_path):
-    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
-    with pytest.raises(binance_vision.ImportError_, match="no trades archive"):
-        binance_vision.import_day("BTC_USDT", "2099-01-01", tmp_path, client=client)
+def test_a_day_missing_a_source_archive_is_not_written(tmp_path):
+    """Half a JST day presented as a whole one is the failure to avoid."""
+    client = _serving({"2026-01-01": _zip_of([_UTC_MORNING])})  # the 31st is 404
+
+    results = binance_vision.import_range("BTC_USDT", "2026-01-01", "2026-01-01", tmp_path,
+                                          client=client)
+
+    assert results == []
+    assert not binance_vision.output_path(tmp_path, "BTC_USDT", "2026-01-01").exists()
 
 
 def test_date_range_is_inclusive():

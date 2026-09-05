@@ -20,12 +20,12 @@ Binance counterpart.
 import csv
 import io
 import zipfile
-from dataclasses import dataclass
-from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
 
+from .importer import DayResult, ImportError_, run_range
+from .jst import date_range  # re-exported: the CLI and tests use it from here
 from .layout import data_path
 
 BASE_URL = "https://data.binance.vision/data/spot/daily/trades"
@@ -41,18 +41,6 @@ _COL_IS_BUYER_MAKER = 5
 # Kamakura Quant Lab's Trade schema encodes the aggressor side as 0=BUY, 1=SELL.
 SIDE_BUY = 0
 SIDE_SELL = 1
-
-
-class ImportError_(RuntimeError):
-    """Raised when an archive cannot be fetched or parsed."""
-
-
-@dataclass
-class ImportResult:
-    file_date: str
-    path: Path
-    rows: int
-    skipped: bool
 
 
 def to_binance_symbol(symbol: str) -> str:
@@ -100,25 +88,22 @@ def parse_trades_csv(raw: bytes) -> list[dict]:
     return rows
 
 
-def _write_parquet(rows: list[dict], path: Path) -> None:
+def fetch_day(symbol: str, file_date: str, client: httpx.Client) -> list[dict] | None:
+    """One source archive, or None when Binance Vision has not published it."""
+    response = client.get(archive_url(symbol, file_date))
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
     try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-    except ImportError:
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+        names = archive.namelist()
+        if not names:
+            raise ImportError_(f"Empty archive for {symbol} on {file_date}.")
+        return parse_trades_csv(archive.read(names[0]))
+    except zipfile.BadZipFile:
         raise ImportError_(
-            "pyarrow is required to write parquet. Install with: pip install 'komachi[data]'"
+            f"Downloaded file for {file_date} is not a valid zip archive."
         ) from None
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pydict(
-        {
-            "ts": [r["ts"] for r in rows],
-            "side": [r["side"] for r in rows],
-            "price": [r["price"] for r in rows],
-            "size": [r["size"] for r in rows],
-        }
-    )
-    pq.write_table(table, path, compression="snappy")
 
 
 def output_path(dest: Path, symbol: str, file_date: str) -> Path:
@@ -130,51 +115,23 @@ def output_path(dest: Path, symbol: str, file_date: str) -> Path:
     return data_path(dest, f"BINANCE:{symbol.upper()}", "Trade", file_date)
 
 
-def import_day(
+def import_range(
     symbol: str,
-    file_date: str,
+    start_date: str,
+    end_date: str,
     dest: Path,
     *,
     client: httpx.Client | None = None,
     force: bool = False,
-) -> ImportResult:
-    """Fetch one day from Binance Vision and write it in the Kamakura Quant Lab schema."""
-    path = output_path(dest, symbol, file_date)
-    if path.exists() and not force:
-        return ImportResult(file_date=file_date, path=path, rows=0, skipped=True)
-
-    owns_client = client is None
+) -> list[DayResult]:
+    """Import a range of JST days from Binance Vision."""
+    owns = client is None
     client = client or httpx.Client(timeout=120.0, follow_redirects=True)
     try:
-        response = client.get(archive_url(symbol, file_date))
-        if response.status_code == 404:
-            raise ImportError_(
-                f"Binance Vision has no trades archive for {to_binance_symbol(symbol)} "
-                f"on {file_date}. Very recent dates may not be published yet."
-            )
-        response.raise_for_status()
-
-        try:
-            archive = zipfile.ZipFile(io.BytesIO(response.content))
-            names = archive.namelist()
-            if not names:
-                raise ImportError_(f"Empty archive for {symbol} on {file_date}.")
-            rows = parse_trades_csv(archive.read(names[0]))
-        except zipfile.BadZipFile:
-            raise ImportError_(f"Downloaded file for {file_date} is not a valid zip archive.") from None
+        return run_range(
+            lambda d: fetch_day(symbol, d, client),
+            f"BINANCE:{symbol.upper()}", start_date, end_date, dest, force=force,
+        )
     finally:
-        if owns_client:
+        if owns:
             client.close()
-
-    if not rows:
-        raise ImportError_(f"No trade rows parsed for {symbol} on {file_date}.")
-
-    _write_parquet(rows, path)
-    return ImportResult(file_date=file_date, path=path, rows=len(rows), skipped=False)
-
-
-def date_range(start_date: str, end_date: str) -> list[str]:
-    start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
-    if end < start:
-        raise ValueError("end date is before start date")
-    return [(start + timedelta(days=n)).isoformat() for n in range((end - start).days + 1)]

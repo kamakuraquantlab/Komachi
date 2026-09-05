@@ -16,6 +16,7 @@ import httpx
 
 from komachi.client import ApiError, KomachiClient
 from komachi.download import already_have, download_file
+from komachi import jst
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
 from komachi.layout import data_path, local_inventory, view_sql
 from komachi.settings import DEFAULT_ROOT, ENV_FILE, TOKEN_FILE, resolve, save_token
@@ -102,42 +103,136 @@ def cmd_markets(args) -> int:
     return 0
 
 
+def _run_import(args, source: str, importer, note: str) -> int:
+    """Shared shape for the free-source importers.
+
+    Both fetch a foreign archive and re-cut it onto JST days, so the only
+    thing that differs is where the bytes come from and what the source
+    publishes.
+    """
+    dest = _settings(args).root
+    try:
+        dates = jst.date_range(args.start, args.end)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    print(f"Importing {len(dates)} JST day(s) of {args.symbol} trades from {source}.")
+    print(f"Downloading directly from {source}; Kamakura Quant Lab is not involved "
+          f"in this transfer.")
+    print("Source days are re-cut onto Asia/Tokyo days, so each day needs the archive")
+    print("before it as well; a day missing either source is not written.\n")
+
+    try:
+        results = importer(args.symbol, args.start, args.end, dest, force=args.force)
+    except Exception as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
+
+    written = [r for r in results if not r.skipped]
+    skipped = [r for r in results if r.skipped]
+    for r in sorted(results, key=lambda r: r.file_date):
+        if r.skipped:
+            print(f"{r.file_date} already present, skipped")
+        else:
+            print(f"{r.file_date} {r.rows:,} trades -> {r.path}")
+
+    incomplete = [d for d in dates if d not in {r.file_date for r in results}]
+    print(f"\n{len(written)} day(s) imported into {dest}"
+          + (f", {len(skipped)} already present" if skipped else ""))
+    if incomplete:
+        print(f"{len(incomplete)} day(s) not written for want of a source archive: "
+              f"{', '.join(incomplete[:5])}{' ...' if len(incomplete) > 5 else ''}")
+    if written:
+        print("Layout matches your Kamakura Quant Lab data, so both load through the same reader.")
+    print(f"\n{note}")
+    return 0
+
+
 def cmd_binance_import(args) -> int:
     """Download from Binance Vision and convert into the Kamakura Quant Lab schema."""
     from komachi import binance_vision
 
-    dest = _settings(args).root
-    try:
-        dates = binance_vision.date_range(args.start, args.end)
-    except ValueError as exc:
-        raise SystemExit(str(exc))
+    return _run_import(
+        args, "Binance Vision", binance_vision.import_range,
+        "Note: Binance Vision publishes spot trades but not L2 order book depth,\n"
+        "so only the Trade dataset can be produced from this source.",
+    )
 
-    print(f"Importing {len(dates)} day(s) of {args.symbol} trades from Binance Vision.")
-    print("Downloading directly from Binance; Kamakura Quant Lab is not involved in this transfer.\n")
 
-    failures = 0
-    with httpx.Client(timeout=120.0, follow_redirects=True) as http:
-        for index, file_date in enumerate(dates, start=1):
-            label = f"[{index}/{len(dates)}] {file_date}"
-            try:
-                outcome = binance_vision.import_day(
-                    args.symbol, file_date, dest, client=http, force=args.force
-                )
-            except Exception as exc:
-                failures += 1
-                print(f"{label} FAILED: {exc}", file=sys.stderr)
-                continue
-            if outcome.skipped:
-                print(f"{label} already present, skipped")
-            else:
-                print(f"{label} {outcome.rows:,} trades -> {outcome.path}")
+def cmd_gmo_import(args) -> int:
+    """Download GMO's published trade history and convert it."""
+    from komachi import gmo_archive
 
-    print(f"\n{len(dates) - failures}/{len(dates)} day(s) imported into {dest}")
-    if failures == 0:
-        print("Layout matches your Kamakura Quant Lab data, so both load through the same reader.")
-    print("\nNote: Binance Vision publishes spot trades but not L2 order book depth,")
-    print("so only the Trade dataset can be produced from this source.")
-    return 1 if failures else 0
+    return _run_import(
+        args, "GMO", gmo_archive.import_range,
+        "Note: GMO publishes trades but not order book depth, so only the Trade\n"
+        "dataset comes from this source. Order book for the delivered GMO markets\n"
+        "is what a purchased market-day carries.",
+    )
+
+
+def _read_local(args, data_type: str):
+    """One local file, addressed the way a buyer thinks about it.
+
+    `stats` and `decode` take a path, which assumes the reader already knows
+    the layout. These take a market and a date, which is what someone has
+    after buying a market-day.
+    """
+    root = _settings(args).root
+    path = data_path(root, args.market, data_type, args.date)
+    if not path.exists():
+        raise SystemExit(
+            f"No {data_type} for {args.market} on {args.date} under {root}.\n"
+            f"Run:  komachi download --market {args.market} --start {args.date} --days 1"
+        )
+    return _load_parquet(path), path
+
+
+def cmd_trades(args) -> int:
+    """Print trades for one market-day."""
+    table, path = _read_local(args, "Trade")
+    rows = table.to_pylist()
+    print(f"{args.market}  {args.date}  Trade  {len(rows):,} trades  {path}")
+    print(f"\n{'time (JST)':<14}{'side':<6}{'price':>16}{'size':>16}")
+    shown = rows[-args.rows:] if args.tail else rows[:args.rows]
+    for r in shown:
+        side = "sell" if r["side"] else "buy"
+        print(f"{_jst_clock(r['ts']):<14}{side:<6}{r['price']:>16,.4f}{r['size']:>16,.8f}")
+    if len(rows) > args.rows:
+        where = "first" if not args.tail else "last"
+        print(f"\n{where} {args.rows} of {len(rows):,}. Use --rows N, or --tail for the end of the day.")
+    return 0
+
+
+def cmd_book(args) -> int:
+    """Print best bid and ask for one market-day."""
+    table, path = _read_local(args, "OrderBook")
+    names = table.column_names
+    bid = next((c for c in names if c in ("bid_price_0", "bid_price0", "bid_0_price")), None)
+    ask = next((c for c in names if c in ("ask_price_0", "ask_price0", "ask_0_price")), None)
+    rows = table.select([c for c in ("ts", bid, ask) if c]).to_pylist() if bid and ask \
+        else table.select(["ts"]).to_pylist()
+    print(f"{args.market}  {args.date}  OrderBook  {len(rows):,} snapshots  {path}")
+    if not (bid and ask):
+        print(f"\nColumns: {', '.join(names[:12])}{' ...' if len(names) > 12 else ''}")
+        print("No best bid/ask column recognised; use 'komachi decode --path' for the raw schema.")
+        return 0
+    print(f"\n{'time (JST)':<14}{'best bid':>16}{'best ask':>16}{'spread':>12}")
+    shown = rows[-args.rows:] if args.tail else rows[:args.rows]
+    for r in shown:
+        b, a = r[bid], r[ask]
+        spread = (a - b) if (a is not None and b is not None) else None
+        print(f"{_jst_clock(r['ts']):<14}{b:>16,.4f}{a:>16,.4f}"
+              f"{spread:>12,.4f}" if spread is not None else f"{_jst_clock(r['ts']):<14}")
+    if len(rows) > args.rows:
+        where = "first" if not args.tail else "last"
+        print(f"\n{where} {args.rows} of {len(rows):,}. Use --rows N, or --tail for the end of the day.")
+    return 0
+
+
+def _jst_clock(ts: float) -> str:
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(ts, jst.TOKYO).strftime("%H:%M:%S.%f")[:12]
 
 
 def cmd_catalog(args) -> int:
@@ -496,6 +591,30 @@ downloading
     p.add_argument("--end", required=True)
     p.add_argument("--force", action="store_true", help="Re-import days already present")
     p.set_defaults(func=cmd_binance_import)
+
+    p = sub.add_parser(
+        "gmo-import",
+        help="Download GMO's published trade history and convert it to the Kamakura Quant Lab schema",
+    )
+    p.add_argument("--symbol", required=True, help="GMO symbol, for example BTC_JPY")
+    p.add_argument("--start", required=True, help="First JST date, inclusive")
+    p.add_argument("--end", required=True, help="Last JST date, inclusive")
+    p.add_argument("--force", action="store_true", help="Re-import days already present")
+    p.set_defaults(func=cmd_gmo_import)
+
+    p = sub.add_parser("trades", help="Print trades for one market-day")
+    p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")
+    p.add_argument("--date", required=True, help="JST date, YYYY-MM-DD")
+    p.add_argument("--rows", type=int, default=20)
+    p.add_argument("--tail", action="store_true", help="Show the end of the day instead of the start")
+    p.set_defaults(func=cmd_trades)
+
+    p = sub.add_parser("book", help="Print best bid and ask for one market-day")
+    p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")
+    p.add_argument("--date", required=True, help="JST date, YYYY-MM-DD")
+    p.add_argument("--rows", type=int, default=20)
+    p.add_argument("--tail", action="store_true", help="Show the end of the day instead of the start")
+    p.set_defaults(func=cmd_book)
 
     p = sub.add_parser("catalog", help="What the seller holds for a market, with per-day quality")
     p.add_argument("--market", required=True)
