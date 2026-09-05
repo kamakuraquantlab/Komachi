@@ -208,10 +208,12 @@ def cmd_book(args) -> int:
     """Print best bid and ask for one market-day."""
     table, path = _read_local(args, "OrderBook")
     names = table.column_names
-    bid = next((c for c in names if c in ("bid_price_0", "bid_price0", "bid_0_price")), None)
-    ask = next((c for c in names if c in ("ask_price_0", "ask_price0", "ask_0_price")), None)
-    rows = table.select([c for c in ("ts", bid, ask) if c]).to_pylist() if bid and ask \
-        else table.select(["ts"]).to_pylist()
+    # The warehouse names these bid0_price / ask0_price; Hase reads the same
+    # pair. Level 0 is the top of book, which is all this command shows.
+    bid = "bid0_price" if "bid0_price" in names else None
+    ask = "ask0_price" if "ask0_price" in names else None
+    rows = (table.select(["ts", bid, ask]).to_pylist() if bid and ask
+            else table.select(["ts"]).to_pylist())
     print(f"{args.market}  {args.date}  OrderBook  {len(rows):,} snapshots  {path}")
     if not (bid and ask):
         print(f"\nColumns: {', '.join(names[:12])}{' ...' if len(names) > 12 else ''}")
@@ -221,9 +223,11 @@ def cmd_book(args) -> int:
     shown = rows[-args.rows:] if args.tail else rows[:args.rows]
     for r in shown:
         b, a = r[bid], r[ask]
-        spread = (a - b) if (a is not None and b is not None) else None
-        print(f"{_jst_clock(r['ts']):<14}{b:>16,.4f}{a:>16,.4f}"
-              f"{spread:>12,.4f}" if spread is not None else f"{_jst_clock(r['ts']):<14}")
+        clock = _jst_clock(r["ts"])
+        if b is None or a is None:
+            print(f"{clock:<14}{'—':>16}{'—':>16}{'—':>12}")
+            continue
+        print(f"{clock:<14}{b:>16,.4f}{a:>16,.4f}{a - b:>12,.4f}")
     if len(rows) > args.rows:
         where = "first" if not args.tail else "last"
         print(f"\n{where} {args.rows} of {len(rows):,}. Use --rows N, or --tail for the end of the day.")
