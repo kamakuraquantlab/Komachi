@@ -18,37 +18,37 @@ SELECT exchange, symbol, count(*) FROM trade GROUP BY 1, 2;
 
 ## Two ways to get the data
 
-Komachi does nothing on its own. It talks to two things:
+What the data is, what is published and how good each day is:
+[kamakuraquantlab.jp/data](https://kamakuraquantlab.jp/data/).
+
+**A browser** — [tsurugaoka](https://kamakuraquantlab.jp/tsurugaoka/)
+
+Fine for looking at a few days. One file at a time, wherever your browser puts
+things.
+
+**The command line** — Komachi, this repository
+
+A client for the Yukinoshita API (`yukinoshita.kamakuraquantlab.jp`). What it
+adds over the browser:
 
 | | |
 |---|---|
-| [kamakuraquantlab.jp](https://kamakuraquantlab.jp) | What the data is, what is published, and browser downloads |
-| `yukinoshita.kamakuraquantlab.jp` | The API: allowance, unlocking market-days, signing URLs |
+| Balance and coverage | Which markets you can reach, and each day's size and quality, before you spend on it |
+| Bulk fetching | A whole range in one command. Re-run to resume; every file is checked against its checksum |
+| The warehouse layout | Hive-partitioned, so DuckDB reads a market-year with no import step |
+| Free sources | Binance Vision and GMO's own archives, re-cut onto JST days so they line up with what you were sent |
+| Local inspection | What is on disk, trades and quotes, DuckDB views |
 
 Yukinoshita decides what you are entitled to and signs a URL against object
 storage. Files come from storage directly, so no file byte passes through the
 API.
 
-[kamakuraquantlab.jp/tsurugaoka/](https://kamakuraquantlab.jp/tsurugaoka/) does
-the same job in a browser, which is fine for a few files. Komachi is for the
-rest: it resumes, verifies checksums, and writes the layout analysis wants.
-
 ## 1  Quick start
 
-### 1.0  Which to use
+Spending a 28 market-day allowance, end to end. Every output below is what the
+command actually prints.
 
-| Days bought | Use |
-|---|---|
-| 1 to 7 market-days | The [browser](https://kamakuraquantlab.jp/tsurugaoka/) is enough |
-| More | Komachi |
-
-A browser saves one file at a time wherever it saves things. Komachi fetches a
-range in one command and writes a Hive-partitioned tree, so DuckDB reads it
-with no import step.
-
-### 1.1  Spending a 28 market-day allowance
-
-**1. Sign in**
+### 1.1  Store the token
 
 ```bash
 pip install 'komachi[duckdb]'
@@ -59,7 +59,7 @@ First run asks where data should go and records the answer in `.env` in the
 current directory. The token is kept separately, at `~/.komachi/config.json`,
 mode 0600.
 
-**2. See what you have**
+### 1.2  Check the balance and the expiry
 
 ```bash
 komachi token status
@@ -89,7 +89,7 @@ deleting a file inside the window costs nothing to recover. After seven days
 the files stop being served, and fetching that date again costs another
 market-day.
 
-**3. See what is published**
+### 1.3  See what is published
 
 Costs nothing.
 
@@ -108,7 +108,7 @@ date         datasets                     rows      size    gap  note
 `gap` is minutes with no record in the JST day, so you can judge a day before
 spending on it.
 
-**4. Download**
+### 1.4  Download
 
 ```bash
 komachi download --market COINCHECK:BTC_SPOT --start 2025-07-01 --days 28
@@ -118,7 +118,7 @@ It shows the range, file count, size and cost before fetching anything.
 Re-running after an interruption skips what is already on disk and never spends
 a market-day twice.
 
-**5. Add the free sources**
+### 1.5  Add the free sources
 
 The same period from Binance and GMO, from their own archives. Costs nothing.
 
@@ -130,7 +130,7 @@ komachi gmo-import     --symbol BTC_JPY  --start 2025-07-01 --end 2025-07-28
 Both are re-cut onto JST days on the way in, so they line up with what you
 bought.
 
-**6. See what landed**
+### 1.6  See what landed
 
 ```bash
 komachi local
@@ -144,7 +144,7 @@ BINANCE:BTC_USDT         Trade         28  2025-07-01 .. 2025-07-28
 GMO:BTC_JPY              Trade         28  2025-07-01 .. 2025-07-28
 ```
 
-**7. Look at it**
+### 1.7  Look at it
 
 ```bash
 komachi trades --market COINCHECK:BTC_SPOT --date 2025-07-01 --rows 3
@@ -159,7 +159,7 @@ time (JST)            best bid        best ask      spread
 00:00:00.000   15,456,905.0000 15,456,978.0000     73.0000
 ```
 
-**8. Query it**
+### 1.8  Query it
 
 ```bash
 komachi duckdb
@@ -229,7 +229,7 @@ Reads what is already on disk. No network, no cost.
 | `komachi duckdb` | Create or refresh the DuckDB views |
 | `komachi sql` | Print the view SQL |
 
-## 4  Binance
+## 4  Binance and GMO
 
 Kamakura Quant Lab does not sell Binance data, because Binance publishes the
 same history free through Binance Vision. `komachi binance-import` downloads it
@@ -237,9 +237,15 @@ from Binance directly, on your machine, and converts it into the same schema
 and layout as the delivered data. One DuckDB view then spans both, which is
 what makes cross-exchange work possible without any ETL.
 
-Binance Vision publishes spot trades but not L2 order book depth, so the
-importer produces `Trade` only. Order book depth for the JP venues is the part
-that is not available anywhere else.
+`komachi gmo-import` does the same for GMO's own trade archive.
+
+Neither publishes L2 order book depth, so both importers produce `Trade` only.
+Depth for the JP venues is the part that is not available anywhere else.
+
+Both archives are cut on their own day boundary — Binance at 00:00 UTC, GMO at
+its 06:00 JST trading-day rollover — and both are re-cut onto JST days on the
+way in. Without that a cross-market join would compare windows nine hours
+apart, silently.
 
 ## 5  What a download costs
 
@@ -269,15 +275,22 @@ that it never spends more than it needs to.
 ## 6  Interrupted downloads resume
 
 Re-run the same command. Files already complete are recognised from their size
-and checksum and dropped from the plan before any URL is requested, so they
-cost neither allowance nor part of the five-refresh budget. That check is the
-one thing this side has to get right.
+and checksum and dropped from the plan before any URL is requested, so a resumed
+run costs no allowance at all. That check is the one thing this side has to get
+right.
 
 URLs are issued one at a time, immediately before the file they unlock. A
 pre-signed URL lives an hour, which is ample for one file and not for a
 hundred days of them.
 
-## 7  Tests
+## 7  What Komachi does not do
+
+1. Reach an exchange API. It talks to the Yukinoshita API, Binance Vision and
+   GMO's published archive, and to object storage for the bytes.
+2. Derive anything. Silver and gold belong to Hase, the analysis toolkit.
+3. Hold a credential for anything but the Kamakura Quant Lab API.
+
+## 8  Tests
 
 ```bash
 python -m pytest tests -q
@@ -286,7 +299,7 @@ python -m pytest tests -q
 No network and no credentials: HTTP is mocked and DuckDB runs on temporary
 files.
 
-## 8  Licence
+## 9  Licence
 
 Apache License 2.0. See [LICENSE.md](LICENSE.md), which also says why Apache
 rather than MIT.

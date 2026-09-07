@@ -5,7 +5,8 @@
 
 *[English README](README-en.md)*
 
-Kamakura Quant Lab のデータは、2 つの方法で取得できます。
+[Kamakura Quant Lab](https://kamakuraquantlab.jp) のデータは、2 つの方法で取得できます。
+収録範囲、スキーマ、品質基準は[データのページ](https://kamakuraquantlab.jp/data/)に記載しています。
 
 **ブラウザ** — [tsurugaoka](https://kamakuraquantlab.jp/tsurugaoka/)
 
