@@ -6,7 +6,7 @@ The **Kamakura Quant Lab** command line client. Fetches historical market data a
 
 ```bash
 pip install 'komachi[duckdb]'
-komachi auth login --token hk_...
+komachi token set --token hk_...
 komachi download --market GMO:BTC_JPY --start 2026-01-01
 komachi duckdb
 duckdb ~/kql-data/kql.duckdb
@@ -52,7 +52,7 @@ with no import step.
 
 ```bash
 pip install 'komachi[duckdb]'
-komachi auth login --token hk_...
+komachi token set --token hk_...
 ```
 
 First run asks where data should go and records the answer in `.env` in the
@@ -62,15 +62,32 @@ mode 0600.
 **2. See what you have**
 
 ```bash
-komachi status
+komachi token status
 ```
 
 ```text
 Product        starter-4w
+Valid until    2026-10-05T14:54:23+00:00
 Allowance      28 market-days  (4 market-weeks)
 Remaining      28 market-days  (4 market-weeks)
 Markets        BITBANK:BTC_SPOT, ... COINCHECK:XRP_SPOT
 ```
+
+There are two expiries and they mean different things.
+
+| | Length | Starts |
+|---|---|---|
+| The token | Shown as `Valid until` | When the token was issued |
+| A market-day you unlocked | 7 days | When you unlocked it |
+
+The **token expiry** is the deadline for spending the balance. Anything unspent
+when it passes is gone.
+
+The **download window** is counted per market-day. Once you have unlocked one
+you can fetch it as often as you like for seven days at no further cost, so
+deleting a file inside the window costs nothing to recover. After seven days
+the files stop being served, and fetching that date again costs another
+market-day.
 
 **3. See what is published**
 
@@ -186,8 +203,8 @@ Anything that talks to the API or to a free source.
 
 | Command | Does | Spends |
 |---|---|---|
-| `komachi auth login --token TOKEN` | Verify and store a token | no |
-| `komachi status` | Allowance, used, remaining, expiry | no |
+| `komachi token set --token TOKEN` | Verify and store a token | no |
+| `komachi token status` | Granted, used, balance, expiry | no |
 | `komachi markets` | Markets the token covers, and referred sources | no |
 | `komachi calendar --market MARKET` | Published dates, and which you own | no |
 | `komachi catalog --market MARKET` | Per-day coverage and quality | no |

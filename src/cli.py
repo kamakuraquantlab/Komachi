@@ -3,7 +3,7 @@
 Run as: python src/cli.py <command> [options]
 
 Auth resolves in the order doc/01 section 4.3 gives: --token, then
-KQL_TOKEN, then the config file written by `auth login`.
+KQL_TOKEN, then the config file written by `token set`.
 """
 
 import argparse
@@ -32,7 +32,7 @@ def _client(args) -> KomachiClient:
     if not s.token:
         raise SystemExit(
             "No token found. Pass --token, set KQL_TOKEN, or run:\n"
-            "  komachi auth login --token <TOKEN>"
+            "  komachi token set --token <TOKEN>"
         )
     return KomachiClient(s.api_url, s.token)
 
@@ -48,14 +48,14 @@ def _human_bytes(n: int | None) -> str:
     return f"{size:.1f}PB"
 
 
-def cmd_auth_login(args) -> int:
+def cmd_token_set(args) -> int:
     # Resolving here rather than after the call, so a first-time user is asked
     # for their data root once, at the moment they set the tool up.
     s = resolve(getattr(args, "root", None), args.api_url, args.token)
     with KomachiClient(s.api_url, args.token) as client:
         state = client.status()
     save_token(args.token)
-    print(f"Logged in. Product {state['product_id']}, valid until {state['valid_until']}.")
+    print(f"Token stored. Product {state['product_id']}, valid until {state['valid_until']}.")
     print(f"Token stored in {TOKEN_FILE} (0600). Data root is {s.root}.")
     return 0
 
@@ -66,7 +66,7 @@ def _in_weeks(market_days: int) -> str:
     return "" if text.endswith("market-days") or text == "none" else f"  ({text})"
 
 
-def cmd_status(args) -> int:
+def cmd_token_status(args) -> int:
     with _client(args) as client:
         state = client.status()
     granted, remaining = state["granted_market_days"], state["remaining_market_days"]
@@ -557,13 +557,16 @@ downloading
     parser.add_argument("--root", help=f"Data root; overrides {ENV_FILE}. Default {DEFAULT_ROOT}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    auth = sub.add_parser("auth", help="Manage stored credentials")
-    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
-    p = auth_sub.add_parser("login", help="Verify a token and store it locally")
+    # The token is the thing a buyer holds, so it is the noun the commands
+    # hang off: one to record it, one to ask what it is worth.
+    token = sub.add_parser("token", help="The purchase token: store it, or ask what it covers")
+    token_sub = token.add_subparsers(dest="token_command", required=True)
+    p = token_sub.add_parser("set", help="Verify a token and store it locally")
     p.add_argument("--token", required=True)
-    p.set_defaults(func=cmd_auth_login)
-
-    sub.add_parser("status", help="Show grant, usage and expiry").set_defaults(func=cmd_status)
+    p.set_defaults(func=cmd_token_set)
+    token_sub.add_parser(
+        "status", help="Allowance, balance and expiry"
+    ).set_defaults(func=cmd_token_status)
     sub.add_parser(
         "markets", help="List markets available to this token, and external sources"
     ).set_defaults(func=cmd_markets)
