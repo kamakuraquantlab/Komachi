@@ -325,24 +325,6 @@ def cmd_calendar(args) -> int:
     return 0
 
 
-def cmd_manifest(args) -> int:
-    start = args.start
-    end = (date.fromisoformat(start) + timedelta(days=args.days - 1)).isoformat()
-    with _client(args) as client:
-        if args.dry_run:
-            estimate = client.manifest(args.market, start, end, dry_run=True)
-            print(f"{estimate['files']} file(s) across {estimate['new_market_days']} new market-day(s).")
-            print(f"Remaining after this request: "
-                  f"{estimate['remaining_market_days'] - estimate['new_market_days']}")
-            return 0
-        result = client.manifest(args.market, start, end)
-    for entry in result["files"]:
-        print(entry["url"] if args.urls_only else
-              f"{entry['file_date']} {entry['data_type']:10} {_human_bytes(entry['size_bytes']):>8}"
-              f"  {entry['url']}")
-    return 0
-
-
 def _show_plan(market, start, end, catalogued, pending, estimate, remaining) -> None:
     """What the run will do, before it does any of it.
 
@@ -397,7 +379,7 @@ def cmd_download(args) -> int:
             print(f"All {len(catalogued)} file(s) for {start}..{end} are present. Nothing to do.")
             return 0
 
-        estimate = client.manifest(args.market, start, end, dry_run=True)
+        estimate = client.estimate(args.market, start, end)
         _show_plan(args.market, start, end, catalogued, pending, estimate, remaining)
         if not args.yes and input("\nContinue? [y/N] ").strip().lower() not in ("y", "yes"):
             print("Cancelled.")
@@ -630,14 +612,6 @@ downloading
     p = sub.add_parser("calendar", help="Show available and downloaded dates for a market")
     p.add_argument("--market", required=True)
     p.set_defaults(func=cmd_calendar)
-
-    p = sub.add_parser("manifest", help="Generate temporary URLs for a date range")
-    p.add_argument("--market", required=True)
-    p.add_argument("--start", required=True)
-    p.add_argument("--days", type=int, default=7, help="Days from --start")
-    p.add_argument("--dry-run", action="store_true", help="Report cost without consuming the grant")
-    p.add_argument("--urls-only", action="store_true", help="Print bare URLs, for wget or aria2c")
-    p.set_defaults(func=cmd_manifest)
 
     p = sub.add_parser("download", help="Download from a start date. Resumable")
     p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")

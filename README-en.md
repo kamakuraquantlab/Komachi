@@ -192,11 +192,10 @@ Anything that talks to the API or to a free source.
 | `komachi calendar --market MARKET` | Published dates, and which you own | no |
 | `komachi catalog --market MARKET` | Per-day coverage and quality | no |
 | `komachi download --market MARKET --start DATE [--days N]` | Fetch a range, resumable | **yes** |
-| `komachi manifest --market MARKET --start DATE [--dry-run]` | Sign URLs, or price the request | yes, unless `--dry-run` |
 | `komachi binance-import --symbol SYMBOL --start DATE --end DATE` | Import from Binance Vision | no |
 | `komachi gmo-import --symbol SYMBOL --start DATE --end DATE` | Import from GMO's archive | no |
 
-Only `download` and `manifest` spend anything. A market-day is one market on
+Only `download` spends anything, and it prices the range and asks before it does. A market-day is one market on
 one date, and the order book and trades for that date are one, not two.
 
 ### 3.2  Local

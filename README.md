@@ -166,11 +166,11 @@ Yukinoshita API または無償公開元との通信を伴うコマンドです�
 | `komachi calendar --market MARKET` | 公開済みの日付と、取得済みの日付 | なし |
 | `komachi catalog --market MARKET` | 日ごとの収録状況と品質 | なし |
 | `komachi download --market MARKET --start DATE [--days N]` | 範囲を指定して取得（中断後は再開） | **あり** |
-| `komachi manifest --market MARKET --start DATE [--dry-run]` | 署名付き URL の発行、または費用の確認 | `--dry-run` 以外は**あり** |
 | `komachi binance-import --symbol SYMBOL --start DATE --end DATE` | Binance Vision から取り込み | なし |
 | `komachi gmo-import --symbol SYMBOL --start DATE --end DATE` | GMO コインの公開データから取り込み | なし |
 
-残高を消費するのは `download` と `manifest` のみです。
+残高を消費するのは `download` のみです。
+取得前に、対象期間・ファイル数・容量・消費数を表示して確認を求めます。
 market-day は 1 マーケットの 1 日分で、同じ日の板と約定を合わせて 1 と数えます。
 
 ### 2.2 ローカル操作

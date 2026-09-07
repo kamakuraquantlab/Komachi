@@ -94,7 +94,14 @@ class KomachiClient:
             params["days"] = days
         return self._request("GET", "/api/datasets/stats", params=params)["files"]
 
-    def manifest(self, market: str, start_date: str, end_date: str, dry_run: bool = False) -> dict:
+    def estimate(self, market: str, start_date: str, end_date: str) -> dict:
+        """What a range would cost, without spending any of it.
+
+        The endpoint can also mint URLs for a whole range, and Komachi never
+        asks it to. A signature lives an hour and a large download does not
+        finish in one, so URLs are signed per file at the moment each is
+        fetched; see `cmd_download`.
+        """
         return self._request(
             "POST",
             "/api/datasets/manifest",
@@ -102,7 +109,7 @@ class KomachiClient:
                 "market": market,
                 "start_date": start_date,
                 "end_date": end_date,
-                "dry_run": dry_run,
+                "dry_run": True,
             },
         )
 
