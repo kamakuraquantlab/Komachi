@@ -2,8 +2,7 @@
 
 *[日本語版はこちら](README.md) — the Japanese README is the primary one.*
 
-The **Kamakura Quant Lab** command line client. Downloads purchased historical
-market data and lays it out so DuckDB can query it immediately.
+The **Kamakura Quant Lab** command line client. Fetches historical market data and lays it out so DuckDB can query it immediately.
 
 ```bash
 pip install 'komachi[duckdb]'
@@ -17,7 +16,7 @@ duckdb ~/kql-data/kql.duckdb
 SELECT exchange, symbol, count(*) FROM trade GROUP BY 1, 2;
 ```
 
-## What it connects to
+## Two ways to get the data
 
 Komachi does nothing on its own. It talks to two things:
 
@@ -34,9 +33,9 @@ API.
 the same job in a browser, which is fine for a few files. Komachi is for the
 rest: it resumes, verifies checksums, and writes the layout analysis wants.
 
-## Quick start
+## 1  Quick start
 
-### Which to use
+### 1.0  Which to use
 
 | Days bought | Use |
 |---|---|
@@ -47,7 +46,7 @@ A browser saves one file at a time wherever it saves things. Komachi fetches a
 range in one command and writes a Hive-partitioned tree, so DuckDB reads it
 with no import step.
 
-### Spending a 28 market-day allowance
+### 1.1  Spending a 28 market-day allowance
 
 **1. Sign in**
 
@@ -160,7 +159,7 @@ GROUP BY date ORDER BY date;
 Plots and derived datasets are not Komachi's job. Hase is the analysis toolkit,
 publishing later.
 
-## Where files go
+## 2  Where files go
 
 `$ROOT_PATH`, else `$KQL_ROOT_PATH`, else `~/kql-data`. Inside it, the same
 Hive-partitioned tree the data was produced in:
@@ -179,9 +178,9 @@ The `bronze/` layer is kept even though you only receive bronze, so derived
 silver and gold datasets you compute locally do not collide with delivered
 files.
 
-## Commands
+## 3  Commands
 
-### Remote
+### 3.1  Remote
 
 Anything that talks to the API or to a free source.
 
@@ -200,7 +199,7 @@ Anything that talks to the API or to a free source.
 Only `download` and `manifest` spend anything. A market-day is one market on
 one date, and the order book and trades for that date are one, not two.
 
-### Local
+### 3.2  Local
 
 Reads what is already on disk. No network, no cost.
 
@@ -214,19 +213,19 @@ Reads what is already on disk. No network, no cost.
 | `komachi duckdb` | Create or refresh the DuckDB views |
 | `komachi sql` | Print the view SQL |
 
-## Binance
+## 4  Binance
 
 Kamakura Quant Lab does not sell Binance data, because Binance publishes the
 same history free through Binance Vision. `komachi binance-import` downloads it
 from Binance directly, on your machine, and converts it into the same schema
-and layout as your purchased data. One DuckDB view then spans both, which is
+and layout as the delivered data. One DuckDB view then spans both, which is
 what makes cross-exchange work possible without any ETL.
 
 Binance Vision publishes spot trades but not L2 order book depth, so the
 importer produces `Trade` only. Order book depth for the JP venues is the part
 that is not available anywhere else.
 
-## What a download costs
+## 5  What a download costs
 
 Access is counted in **market-days**: one market on one date, covering every
 data type published for it. Trade and OrderBook for one market/date are one
@@ -251,7 +250,7 @@ request is the service's decision, made per file; a client-side opinion could
 only be a duplicate that is sometimes wrong. What Komachi does guarantee is
 that it never spends more than it needs to.
 
-## Interrupted downloads resume
+## 6  Interrupted downloads resume
 
 Re-run the same command. Files already complete are recognised from their size
 and checksum and dropped from the plan before any URL is requested, so they
@@ -262,7 +261,7 @@ URLs are issued one at a time, immediately before the file they unlock. A
 pre-signed URL lives an hour, which is ample for one file and not for a
 hundred days of them.
 
-## Tests
+## 7  Tests
 
 ```bash
 python -m pytest tests -q
@@ -271,7 +270,7 @@ python -m pytest tests -q
 No network and no credentials: HTTP is mocked and DuckDB runs on temporary
 files.
 
-## Licence
+## 8  Licence
 
 Apache License 2.0. See [LICENSE.md](LICENSE.md), which also says why Apache
 rather than MIT.

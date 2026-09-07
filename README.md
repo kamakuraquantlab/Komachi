@@ -1,61 +1,52 @@
 # Komachi
 
 **鎌倉クオンツラボ**のコマンドラインクライアントです。
-購入したヒストリカル市場データを取得し、DuckDB からそのまま参照できる構成で保存します。
+ヒストリカル市場データを取得し、DuckDB からそのまま参照できる構成で保存します。
 
 *[English README](README-en.md)*
 
-```bash
-pip install 'komachi[duckdb]'
-komachi auth login --token hk_...
-komachi download --market GMO:BTC_JPY --start 2026-01-01
-komachi duckdb
-duckdb ~/kql-data/kql.duckdb
-```
+Kamakura Quant Lab のデータは、2 つの方法で取得できます。
 
-## 接続先
+**ブラウザ** — [tsurugaoka](https://kamakuraquantlab.jp/tsurugaoka/)
 
-Komachi は単体では動作しません。次の 2 つに接続します。
+数日分を確認する用途に適しています。1 ファイルずつ、ブラウザの保存先に保存されます。
 
-| 接続先 | 役割 |
+**コマンドライン** — Komachi（本リポジトリ）
+
+Yukinoshita API（`yukinoshita.kamakuraquantlab.jp`）を呼び出すクライアントです。
+まとまった量を扱う場合はこちらを使用します。
+
+| 機能 | 内容 |
 |---|---|
-| [kamakuraquantlab.jp](https://kamakuraquantlab.jp) | データの内容、収録範囲、購入したデータのダウンロード |
-| `yukinoshita.kamakuraquantlab.jp` | API。残数の確認、market-day のアンロック、署名付き URL の発行 |
+| 残数と配信状況の確認 | 利用できるマーケット、日付ごとの収録状況と品質を、取得前に確認できます |
+| 一括取得 | 範囲を指定してまとめて取得します。中断後は同じコマンドで再開し、チェックサムで検証します |
+| Hive 形式での保存 | 収集時と同じディレクトリ構成で保存するため、DuckDB から取り込み処理なしに参照できます |
+| 無償公開データの取り込み | Binance Vision と GMO コインの公開データを、日本時間の日付へ再分割して取り込みます。配信データと同一の条件で比較できます |
+| ローカル参照 | 手元のファイルの一覧、約定と気配の表示、DuckDB ビューの作成 |
 
-Yukinoshita が権限を判断し、S3 への署名付き URL を発行します。
-ファイルの実体は S3 から直接取得するため、API がデータ本体を中継することはありません。
+権限の判断と URL の署名は Yukinoshita が行います。
+ファイルの実体はオブジェクトストレージから直接取得するため、
+API がデータ本体を中継することはありません。
 
-ブラウザからのダウンロードは [kamakuraquantlab.jp/tsurugaoka/](https://kamakuraquantlab.jp/tsurugaoka/)
-でも行えますが、数ファイルを確認する用途向けです。
-まとまった量を扱う場合、再開・チェックサム検証・分析向けのレイアウト保存に対応した
-Komachi をご利用ください。
+## 1 クイックスタート
 
-## クイックスタート
+28 market-day を使う場合の例
 
-### どちらを使うか
-
-| 購入した日数 | 推奨 |
-|---|---|
-| 1〜7 market-day | [ブラウザ](https://kamakuraquantlab.jp/tsurugaoka/)で十分です |
-| それ以上 | Komachi。中断後の再開、チェックサム検証に対応し、分析にそのまま使える構成で保存します |
-
-ブラウザは 1 ファイルずつ、ブラウザの保存先に置きます。
-Komachi は範囲を指定して一括で取得し、Hive 形式のディレクトリに保存するため、
-DuckDB から追加の取り込み処理なしに参照できます。
-
-### 28 market-day を使う場合の例
-
-**1. サインイン**
+### 1.1 サインイン
 
 ```bash
 pip install 'komachi[duckdb]'
 komachi auth login --token hk_...
 ```
+
+最小構成は `pip install komachi`（`httpx` のみ）です。
+取り込み、DuckDB 連携、ファイル検査を使う場合は上記の `duckdb` エクストラを指定します。
 
 初回はデータの保存先を尋ねられ、実行ディレクトリの `.env` に記録されます。
-トークンは `~/.komachi/config.json`（パーミッション 0600）に保存されます。
+トークンは `.env` ではなく `~/.komachi/config.json`（パーミッション 0600）に保存されます。
+データディレクトリをそのままバージョン管理下に置いても、資格情報が混入しません。
 
-**2. 残数の確認**
+### 1.2 残数と有効期限の確認
 
 ```bash
 komachi status
@@ -71,9 +62,9 @@ Remaining      28 market-days  (4 market-weeks)
 Markets        BITBANK:BTC_SPOT, BITBANK:ETH_SPOT, ... COINCHECK:XRP_SPOT
 ```
 
-**3. 収録状況の確認**
+### 1.3 収録状況の確認
 
-どのマーケットが使えるかを確認します。残数は消費しません。
+どのマーケットが使えるかを確認します。
 
 ```bash
 komachi markets
@@ -91,7 +82,7 @@ date         datasets                     rows      size    gap  note
 
 `gap` は、その日のうち記録のない分数です。取得前に品質を確認できます。
 
-**4. 取得**
+### 1.4 取得
 
 ```bash
 komachi download --market COINCHECK:BTC_SPOT --start 2025-07-01 --days 28
@@ -101,7 +92,7 @@ komachi download --market COINCHECK:BTC_SPOT --start 2025-07-01 --days 28
 中断した場合は同じコマンドを再実行すれば、取得済みのファイルは飛ばして続きから再開します。
 すでに手元にあるファイルに対して残数を再消費することはありません。
 
-**5. 無償公開データの取り込み**
+### 1.5 無償公開データの取り込み
 
 同じ期間の Binance と GMO コインの約定データを、無償公開元から取り込みます。
 残数は消費しません。
@@ -111,9 +102,9 @@ komachi binance-import --symbol BTC_USDT --start 2025-07-01 --end 2025-07-28
 komachi gmo-import     --symbol BTC_JPY  --start 2025-07-01 --end 2025-07-28
 ```
 
-取り込み時に日本時間の日付へ再分割するため、購入データと同じ基準で比較できます。
+取り込み時に日本時間の日付へ再分割するため、配信データと同じ基準で比較できます。
 
-**6. 保存先の確認**
+### 1.6 保存先の確認
 
 ```bash
 komachi local
@@ -127,7 +118,7 @@ BINANCE:BTC_USDT         Trade         28  2025-07-01 .. 2025-07-28
 GMO:BTC_JPY              Trade         28  2025-07-01 .. 2025-07-28
 ```
 
-**7. 中身の確認**
+### 1.7 中身の確認
 
 ```bash
 komachi trades --market COINCHECK:BTC_SPOT --date 2025-07-01 --rows 3
@@ -144,7 +135,7 @@ time (JST)            best bid        best ask      spread
 00:00:00.000   15,453,307.0000 15,458,283.0000  4,976.0000
 ```
 
-**8. 分析へ**
+### 1.8 分析へ
 
 ```bash
 komachi duckdb
@@ -161,9 +152,9 @@ GROUP BY date ORDER BY date;
 作図と派生データの作成は Komachi の範囲外です。
 分析ツールキットの Hase が担当します（公開準備中）。
 
-## コマンド一覧
+## 2 コマンド一覧
 
-### リモート操作
+### 2.1 リモート操作
 
 Yukinoshita API または無償公開元との通信を伴うコマンドです。
 
@@ -182,7 +173,7 @@ Yukinoshita API または無償公開元との通信を伴うコマンドです�
 残数を消費するのは `download` と `manifest` のみです。
 market-day は 1 マーケットの 1 日分で、同じ日の板と約定を合わせて 1 と数えます。
 
-### ローカル操作
+### 2.2 ローカル操作
 
 手元のファイルだけを参照します。通信も残数の消費もありません。
 
@@ -196,7 +187,7 @@ market-day は 1 マーケットの 1 日分で、同じ日の板と約定を合
 | `komachi duckdb` | DuckDB のビューを作成・更新 |
 | `komachi sql` | ビュー定義の SQL を出力 |
 
-## 保存先の構成
+## 3 保存先の構成
 
 データは、収集時と同じ Hive 形式のディレクトリに保存されます。
 
@@ -211,7 +202,7 @@ DuckDB、PyArrow、Spark、Athena のいずれも `dataset`・`exchange`・`symb
 SELECT * FROM read_parquet('~/kql-data/bronze/dataset=Trade/**/*.parquet', hive_partitioning = 1);
 ```
 
-## 日付の扱い
+## 4 日付の扱い
 
 `date=` は**日本時間の 1 日**です。`date=2026-01-15` は 2026-01-15 00:00〜23:59 JST、
 UTC では 2026-01-14 15:00〜2026-01-15 14:59 にあたります。
@@ -220,37 +211,17 @@ UTC では 2026-01-14 15:00〜2026-01-15 14:59 にあたります。
 取り込み元の日付区切りは取引所ごとに異なります。
 Binance Vision は 00:00 UTC、GMO コインは取引日の切り替えである 21:00 UTC を基準としています。
 Komachi は取り込み時に日本時間の日付へ再分割するため、
-有償データと無償データを同じ基準で比較できます。
+配信データと無償公開データを同じ基準で比較できます。
 
 このため、ある 1 日を取り込むには前日分の元ファイルも必要です。
 どちらか一方しか取得できない日は、不完全なまま書き出さずに保留します。
 
-## 設定
+## 5 Komachi が行わないこと
 
-| 項目 | 保存場所 |
-|---|---|
-| データの保存先、API の URL | 実行ディレクトリの `.env` |
-| 購入トークン | `~/.komachi/config.json`（パーミッション 0600） |
-
-トークンを `.env` に置かないのは、データディレクトリをそのまま
-バージョン管理下に置いても資格情報が混入しないようにするためです。
-
-## 依存関係
-
-最小構成では `httpx` のみです。
-Parquet を扱う機能（取り込み、DuckDB 連携、ファイル検査）は `duckdb` エクストラに含まれます。
-
-```bash
-pip install komachi              # 取得のみ
-pip install 'komachi[duckdb]'    # 取得、取り込み、分析
-```
-
-## Komachi が行わないこと
-
-1. 取引所 API への直接接続。接続先はオブジェクトストレージ、Binance Vision、GMO コインの公開データのみです。
+1. 取引所 API への直接接続。接続先は Yukinoshita API、Binance Vision、GMO コインの公開データのみです。
 2. データの加工・導出。silver 以降は [Hase](https://github.com/kamakuraquantlab) が担当します。
 3. Kamakura Quant Lab の API 以外に対する資格情報の保持。
 
-## ライセンス
+## 6 ライセンス
 
-Apache License 2.0。[LICENSE.md](LICENSE.md) をご覧ください。
+Apache License 2.0。[LICENSE.md](LICENSE.md)
