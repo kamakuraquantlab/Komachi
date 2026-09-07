@@ -18,7 +18,7 @@ Yukinoshita API（`yukinoshita.kamakuraquantlab.jp`）を呼び出すクライ�
 
 | 機能 | 内容 |
 |---|---|
-| 残数と配信状況の確認 | 利用できるマーケット、日付ごとの収録状況と品質を、取得前に確認できます |
+| 残高と配信状況の確認 | 利用できるマーケット、日付ごとの収録状況と品質を、取得前に確認できます |
 | 一括取得 | 範囲を指定してまとめて取得します。中断後は同じコマンドで再開し、チェックサムで検証します |
 | Hive 形式での保存 | 収集時と同じディレクトリ構成で保存するため、DuckDB から取り込み処理なしに参照できます |
 | 無償公開データの取り込み | Binance Vision と GMO コインの公開データを、日本時間の日付へ再分割して取り込みます。配信データと同一の条件で比較できます |
@@ -46,7 +46,7 @@ komachi auth login --token hk_...
 トークンは `.env` ではなく `~/.komachi/config.json`（パーミッション 0600）に保存されます。
 データディレクトリをそのままバージョン管理下に置いても、資格情報が混入しません。
 
-### 1.2 残数と有効期限の確認
+### 1.2 残高と有効期限の確認
 
 ```bash
 komachi status
@@ -90,12 +90,12 @@ komachi download --market COINCHECK:BTC_SPOT --start 2025-07-01 --days 28
 
 実行前に、対象期間・ファイル数・容量・消費する market-day 数を表示して確認を求めます。
 中断した場合は同じコマンドを再実行すれば、取得済みのファイルは飛ばして続きから再開します。
-すでに手元にあるファイルに対して残数を再消費することはありません。
+すでに手元にあるファイルに対して残高を再消費することはありません。
 
 ### 1.5 無償公開データの取り込み
 
 同じ期間の Binance と GMO コインの約定データを、無償公開元から取り込みます。
-残数は消費しません。
+残高は消費しません。
 
 ```bash
 komachi binance-import --symbol BTC_USDT --start 2025-07-01 --end 2025-07-28
@@ -158,10 +158,10 @@ GROUP BY date ORDER BY date;
 
 Yukinoshita API または無償公開元との通信を伴うコマンドです。
 
-| コマンド | 内容 | 残数の消費 |
+| コマンド | 内容 | 残高の消費 |
 |---|---|---|
 | `komachi auth login --token TOKEN` | トークンを検証して保存 | なし |
-| `komachi status` | 残数、使用済み数、有効期限 | なし |
+| `komachi status` | 残高、使用済み数、有効期限 | なし |
 | `komachi markets` | 利用できるマーケットと、無償公開元の案内 | なし |
 | `komachi calendar --market MARKET` | 公開済みの日付と、取得済みの日付 | なし |
 | `komachi catalog --market MARKET` | 日ごとの収録状況と品質 | なし |
@@ -170,12 +170,12 @@ Yukinoshita API または無償公開元との通信を伴うコマンドです�
 | `komachi binance-import --symbol SYMBOL --start DATE --end DATE` | Binance Vision から取り込み | なし |
 | `komachi gmo-import --symbol SYMBOL --start DATE --end DATE` | GMO コインの公開データから取り込み | なし |
 
-残数を消費するのは `download` と `manifest` のみです。
+残高を消費するのは `download` と `manifest` のみです。
 market-day は 1 マーケットの 1 日分で、同じ日の板と約定を合わせて 1 と数えます。
 
 ### 2.2 ローカル操作
 
-手元のファイルだけを参照します。通信も残数の消費もありません。
+手元のファイルだけを参照します。通信も残高の消費もありません。
 
 | コマンド | 内容 |
 |---|---|
