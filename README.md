@@ -1,7 +1,9 @@
 # Komachi
 
-The **Kamakura Quant Lab** command line client. Downloads purchased historical
-market data and lays it out so DuckDB can query it immediately.
+**鎌倉クオンツラボ**のコマンドラインクライアントです。
+購入したヒストリカル市場データを取得し、DuckDB からそのまま参照できる構成で保存します。
+
+*[English README](README-en.md)*
 
 ```bash
 pip install 'komachi[duckdb]'
@@ -11,100 +13,98 @@ komachi duckdb
 duckdb ~/kql-data/kql.duckdb
 ```
 
-```sql
-SELECT exchange, symbol, count(*) FROM trade GROUP BY 1, 2;
-```
+## 接続先
 
-## Where files go
+Komachi は単体では動作しません。次の 2 つに接続します。
 
-`$ROOT_PATH`, else `$KQL_ROOT_PATH`, else `~/kql-data`. Inside it, the same
-Hive-partitioned tree the data was produced in:
-
-```
-$ROOT_PATH/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
-```
-
-The layout is matched rather than invented, for two reasons. DuckDB, PyArrow,
-Spark and Athena all recover `dataset`, `exchange`, `symbol` and `date` as real
-columns from the path, so a whole market-year is one `read_parquet` with a glob
-and no manifest to track. And example notebooks written against the warehouse
-run unchanged against your copy.
-
-The `bronze/` layer is kept even though you only receive bronze, so derived
-silver and gold datasets you compute locally do not collide with delivered
-files.
-
-## Commands
-
-| Command | Purpose |
+| 接続先 | 役割 |
 |---|---|
-| `komachi auth login --token TOKEN` | Verify a token and store it |
-| `komachi status` | Grant, market-days used and remaining, expiry |
-| `komachi markets` | Markets your token covers, plus referred sources |
-| `komachi calendar --market MARKET` | Available and already-downloaded dates |
-| `komachi manifest --market ... --start ... --days N` | Temporary URLs; `--dry-run` to price it first |
-| `komachi download --market ... --start ...` | Download from a date. Resumable and verified |
-| `komachi refresh --file FILE_ID` | Re-sign one expired or failed file |
-| `komachi binance-import --symbol ... --start ... --end ...` | Import Binance history from Binance Vision |
-| `komachi local` | What is on disk already |
-| `komachi duckdb` | Create or refresh a DuckDB database of views |
-| `komachi sql` | Print the view SQL for your own session |
-| `komachi stats --path PATH` | Rows and time range for one file |
-| `komachi decode --path PATH` | Schema and first rows |
+| [kamakuraquantlab.jp](https://kamakuraquantlab.jp) | データの内容、収録範囲、購入したデータのダウンロード |
+| `yukinoshita.kamakuraquantlab.jp` | API。残数の確認、market-day のアンロック、署名付き URL の発行 |
 
-## Binance
+Yukinoshita が権限を判断し、S3 への署名付き URL を発行します。
+ファイルの実体は S3 から直接取得するため、API がデータ本体を中継することはありません。
 
-Kamakura Quant Lab does not sell Binance data, because Binance publishes the
-same history free through Binance Vision. `komachi binance-import` downloads it
-from Binance directly, on your machine, and converts it into the same schema
-and layout as your purchased data. One DuckDB view then spans both, which is
-what makes cross-exchange work possible without any ETL.
+ブラウザからのダウンロードは [kamakuraquantlab.jp/tsurugaoka/](https://kamakuraquantlab.jp/tsurugaoka/)
+でも行えますが、数ファイルを確認する用途向けです。
+まとまった量を扱う場合、再開・チェックサム検証・分析向けのレイアウト保存に対応した
+Komachi をご利用ください。
 
-Binance Vision publishes spot trades but not L2 order book depth, so the
-importer produces `Trade` only. Order book depth for the JP venues is the part
-that is not available anywhere else.
+## できること
 
-## What a download costs
+| コマンド | 内容 |
+|---|---|
+| `komachi auth login --token TOKEN` | トークンを検証して保存 |
+| `komachi status` | 残数、使用済み数、有効期限 |
+| `komachi markets` | 利用できるマーケットと、無償公開元の案内 |
+| `komachi calendar --market MARKET` | 公開済みの日付と、取得済みの日付 |
+| `komachi catalog --market MARKET` | 日ごとの収録状況と品質 |
+| `komachi download --market MARKET --start DATE [--days N]` | 範囲を指定して取得（中断後は再開） |
+| `komachi trades --market MARKET --date DATE` | 約定データの表示 |
+| `komachi book --market MARKET --date DATE` | 最良気配とスプレッドの表示 |
+| `komachi binance-import --symbol SYMBOL --start DATE --end DATE` | Binance Vision から取り込み |
+| `komachi gmo-import --symbol SYMBOL --start DATE --end DATE` | GMO コインの公開データから取り込み |
+| `komachi local` | 手元にあるファイルの一覧 |
+| `komachi duckdb` | DuckDB のビューを作成・更新 |
+| `komachi sql` | ビュー定義の SQL を出力 |
+| `komachi stats --path PATH` | 行数と時間範囲 |
+| `komachi decode --path PATH` | スキーマと先頭数行 |
 
-Access is counted in **market-days**: one market on one date, covering every
-data type published for it. Trade and OrderBook for one market/date are one
-market-day, not two.
+## 保存先の構成
 
-`download` needs a market and a start date. By default it takes as many days
-as your remaining allowance covers; `--days N` asks for fewer. Before anything
-is fetched it shows what the run will do:
+データは、収集時と同じ Hive 形式のディレクトリに保存されます。
 
-```
-Market      COINCHECK:BTC_SPOT
-Dates       2025-07-01 .. 2025-07-07   (7 days, JST)
-Files       14 to download, 207.7MB
-Cost        7 of 21 remaining market-day(s)
+```text
+$KQL_ROOT_PATH/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
 ```
 
-Everything in that summary comes from the catalogue, so it is known without
-issuing a URL or spending anything.
+DuckDB、PyArrow、Spark、Athena のいずれも `dataset`・`exchange`・`symbol`・`date` を
+パスから列として認識します。1 年分でも次の 1 行で読み込めます。
 
-Komachi does not second-guess your entitlement. Whether the allowance covers a
-request is the service's decision, made per file; a client-side opinion could
-only be a duplicate that is sometimes wrong. What Komachi does guarantee is
-that it never spends more than it needs to.
+```sql
+SELECT * FROM read_parquet('~/kql-data/bronze/dataset=Trade/**/*.parquet', hive_partitioning = 1);
+```
 
-## Interrupted downloads resume
+## 日付の扱い
 
-Re-run the same command. Files already complete are recognised from their size
-and checksum and dropped from the plan before any URL is requested, so they
-cost neither allowance nor part of the five-refresh budget. That check is the
-one thing this side has to get right.
+`date=` は**日本時間の 1 日**です。`date=2026-01-15` は 2026-01-15 00:00〜23:59 JST、
+UTC では 2026-01-14 15:00〜2026-01-15 14:59 にあたります。
+ファイル内のタイムスタンプは UTC エポック秒のため、実行環境のタイムゾーンに依存しません。
 
-URLs are issued one at a time, immediately before the file they unlock. A
-pre-signed URL lives an hour, which is ample for one file and not for a
-hundred days of them.
+取り込み元の日付区切りは取引所ごとに異なります。
+Binance Vision は 00:00 UTC、GMO コインは取引日の切り替えである 21:00 UTC を基準としています。
+Komachi は取り込み時に日本時間の日付へ再分割するため、
+有償データと無償データを同じ基準で比較できます。
 
-## Tests
+このため、ある 1 日を取り込むには前日分の元ファイルも必要です。
+どちらか一方しか取得できない日は、不完全なまま書き出さずに保留します。
+
+## 設定
+
+| 項目 | 保存場所 |
+|---|---|
+| データの保存先、API の URL | 実行ディレクトリの `.env` |
+| 購入トークン | `~/.komachi/config.json`（パーミッション 0600） |
+
+トークンを `.env` に置かないのは、データディレクトリをそのまま
+バージョン管理下に置いても資格情報が混入しないようにするためです。
+
+## 依存関係
+
+最小構成では `httpx` のみです。
+Parquet を扱う機能（取り込み、DuckDB 連携、ファイル検査）は `duckdb` エクストラに含まれます。
 
 ```bash
-python -m pytest tests -q
+pip install komachi              # 取得のみ
+pip install 'komachi[duckdb]'    # 取得、取り込み、分析
 ```
 
-No network and no credentials: HTTP is mocked and DuckDB runs on temporary
-files.
+## Komachi が行わないこと
+
+1. 取引所 API への直接接続。接続先はオブジェクトストレージ、Binance Vision、GMO コインの公開データのみです。
+2. データの加工・導出。silver 以降は [Hase](https://github.com/kamakuraquantlab) が担当します。
+3. Kamakura Quant Lab の API 以外に対する資格情報の保持。
+
+## ライセンス
+
+Apache License 2.0。[LICENSE.md](LICENSE.md) をご覧ください。
