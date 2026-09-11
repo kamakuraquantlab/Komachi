@@ -50,6 +50,12 @@ command actually prints.
 
 ### 1.1  Store the token
 
+Issue one at
+[kamakuraquantlab.jp/tsurugaoka/](https://kamakuraquantlab.jp/tsurugaoka/):
+sign in with the order number and email you already have, and press *Show my
+token*. It is shown once, and you can issue another whenever you need one —
+doing so stops the previous one working.
+
 ```bash
 pip install 'komachi[duckdb]'
 komachi token set --token hk_...
@@ -59,7 +65,7 @@ First run asks where data should go and records the answer in `.env` in the
 current directory. The token is kept separately, at `~/.komachi/config.json`,
 mode 0600.
 
-### 1.2  Check the balance and the expiry
+### 1.2  Check the balance and the deadlines
 
 ```bash
 komachi token status
@@ -67,27 +73,54 @@ komachi token status
 
 ```text
 Product        starter-4w
-Valid until    2026-10-05T14:54:23+00:00
+Token status   active
+Access         active
+First used     2026-09-11T05:54:23+00:00
+Access until   2026-09-25T05:54:23+00:00
 Allowance      28 market-days  (4 market-weeks)
 Remaining      28 market-days  (4 market-weeks)
 Markets        BITBANK:BTC_SPOT, ... COINCHECK:XRP_SPOT
+
+Active until 2026-09-25. Until then you can unlock market-days and re-download
+anything already unlocked as often as you like, at no further cost.
 ```
 
-There are two expiries and they mean different things.
+There are two deadlines, and they apply one after the other.
 
-| | Length | Starts |
-|---|---|---|
-| The token | Shown as `Valid until` | When the token was issued |
-| A market-day you unlocked | 7 days | When you unlocked it |
+| | Length | Starts | Once it passes |
+|---|---|---|---|
+| First sign-in | 1 month | When the token was issued | The access window never starts |
+| Access | 14 days | **The first time you use it** | Nothing further is unlocked or served |
 
-The **token expiry** is the deadline for spending the balance. Anything unspent
-when it passes is gone.
+You have to **sign in once** before the first deadline. That first sign-in is
+what issues your token and starts the access window. Signing in after the
+deadline does not start one.
 
-The **download window** is counted per market-day. Once you have unlocked one
-you can fetch it as often as you like for seven days at no further cost, so
-deleting a file inside the window costs nothing to recover. After seven days
-the files stop being served, and fetching that date again costs another
-market-day.
+**Access** is counted from that first use rather than from the order, so being
+slow to start does not cost you days you paid for.
+
+Inside the access window you can fetch anything you have unlocked as often as
+you like. Deleting a file, or a download that fails, costs nothing to recover,
+and there is no cap on how many times a file may be re-signed; each request
+mints a fresh link that lives an hour. `komachi download` unlocks any day in
+range that you do not already own as it fetches it, so there is no separate
+unlock step.
+
+After it, no new market-days are unlocked and no new download links are issued,
+even if you have balance left. `komachi download` says so and stops before
+fetching anything, and you can still sign in to the website to see your usage
+and the date it ended. Market-days already spent stay spent and nothing is
+refunded, so take what you unlock while the window is open.
+
+In practice you will already be inside the access window by the time you get
+here, because any successful call starts it — including the one `komachi token
+set` makes to check your token. So `komachi token status` shows the date and
+how many days are left on it.
+
+Both the date and the count come from the service. This tool prints what the
+API returns and works out no deadline of its own: the subtraction needs a
+clock, and yours is not the one the deadline is kept on. It is also why an old
+copy of this tool can still tell you the truth about today's policy.
 
 ### 1.3  See what is published
 

@@ -35,6 +35,13 @@ API がデータ本体を中継することはありません。
 
 ### 1.1 サインイン
 
+トークンは
+[kamakuraquantlab.jp/tsurugaoka/](https://kamakuraquantlab.jp/tsurugaoka/)
+で発行します。
+手元にある注文番号とメールアドレスでサインインし、「トークンを表示」を押してください。
+表示はその 1 回だけですが、必要になればいつでも発行し直せます。
+発行し直すと、それまでのトークンは使えなくなります。
+
 ```bash
 pip install 'komachi[duckdb]'
 komachi token set --token hk_...
@@ -47,7 +54,7 @@ komachi token set --token hk_...
 トークンは `.env` ではなく `~/.komachi/config.json`（パーミッション 0600）に保存されます。
 データディレクトリをそのままバージョン管理下に置いても、資格情報が混入しません。
 
-### 1.2 残高と有効期限の確認
+### 1.2 残高と期限の確認
 
 ```bash
 komachi token status
@@ -56,30 +63,54 @@ komachi token status
 ```text
 Product        starter-4w
 Token status   active
-Valid until    2026-10-05T14:54:23+00:00
+Access         active
+First used     2026-09-11T05:54:23+00:00
+Access until   2026-09-25T05:54:23+00:00
 Allowance      28 market-days  (4 market-weeks)
 Remaining      28 market-days  (4 market-weeks)
 
 Markets        BITBANK:BTC_SPOT, BITBANK:ETH_SPOT, ... COINCHECK:XRP_SPOT
+
+Active until 2026-09-25. Until then you can unlock market-days and re-download
+anything already unlocked as often as you like, at no further cost.
 ```
 
-有効期限は 2 つあり、意味が異なります。
+期限は 2 つあり、順番に効きます。
 
-| | 期間 | 起点 |
-|---|---|---|
-| トークンの有効期限 | `Valid until` に表示されます | トークンの発行時 |
-| ダウンロード可能期間 | 7 日間 | その market-day を取得した時点 |
+| | 期間 | 起点 | 過ぎると |
+|---|---|---|---|
+| 利用開始期限 | 1 か月 | トークンの発行時 | 利用期間が始まらず、以後は使えません |
+| 利用期間 | 14 日 | **最初に使った時** | 新たなアンロックも配信も行われません |
 
-**トークンの有効期限**までに残高を使い切る必要があります。
-期限を過ぎると、未使用の残高は失効します。
+**利用開始期限**までに、一度 tsurugaoka にサインインする必要があります。
+この最初のサインインでトークンが発行され、同時に利用期間が始まります。
+期限を過ぎてからサインインしても利用期間は始まりません。
 
-**ダウンロード可能期間**は market-day ごとに数えます。
-一度取得した market-day は 7 日間、回数の制限なく再取得できます。
-この期間内であれば、ファイルを削除しても残高を再消費することなく取り直せます。
-7 日を過ぎると配信が終了し、同じ日付を取得するには market-day を 1 つ消費します。
+**利用期間**はその最初の 1 回から数えます。
+受け取ってすぐに作業を始められなくても不利にならないよう、
+発行時ではなく初回利用時を起点にしています。
 
-どちらも `komachi token status` の `Valid until` と、
-[tsurugaoka](https://kamakuraquantlab.jp/tsurugaoka/) のダウンロード画面で確認できます。
+利用期間の中では、アンロックした market-day を何度でも取得できます。
+ファイルを削除しても、ダウンロードに失敗しても、取り直しに残高は消費しません。
+回数の上限はありません。
+ダウンロードのたびに新しい URL を発行し、その URL は 1 時間で失効します。
+`komachi download` は未アンロックの日付をその場でアンロックしてから取得するため、
+アンロックのための操作は必要ありません。
+
+利用期間を過ぎると、新しい market-day のアンロックも、ダウンロード用 URL の発行も停止します。
+残高が残っていても使えません。
+`komachi download` は取得を始める前に、その旨を表示して終了します。
+tsurugaoka にはサインインでき、利用状況と終了日を確認できます。
+消費済みの market-day は消費済みのまま残り、返還はありません。
+期間内に必要なファイルを保存してください。
+
+実際には、ここに来た時点ですでに利用期間が始まっています。
+`komachi token set` がトークンを確認するために行う通信も「使った」1 回に数えるためです。
+そのため `komachi token status` には、期限の日付と残り日数が表示されます。
+
+日付も残り日数もサーバーが計算して返したものをそのまま表示しています。
+残り日数の計算には時計が必要ですが、その時計は手元のものではないからです。
+このツールが独自に期限を判断することはありません。
 
 ### 1.3 収録状況の確認
 
@@ -180,7 +211,7 @@ Yukinoshita API または無償公開元との通信を伴うコマンドです�
 | コマンド | 内容 | 残高の消費 |
 |---|---|---|
 | `komachi token set --token TOKEN` | トークンを検証して保存 | なし |
-| `komachi token status` | 付与数、使用済み、残高、有効期限 | なし |
+| `komachi token status` | 付与数、使用済み、残高、2 つの期限 | なし |
 | `komachi markets` | 利用できるマーケットと、無償公開元の案内 | なし |
 | `komachi calendar --market MARKET` | 公開済みの日付と、取得済みの日付 | なし |
 | `komachi catalog --market MARKET` | 日ごとの収録状況と品質 | なし |

@@ -48,6 +48,59 @@ def _human_bytes(n: int | None) -> str:
     return f"{size:.1f}PB"
 
 
+def _timing(state: dict) -> dict:
+    """The server's answer about time.
+
+    Read, never derived. `02_yukinoshita-api.md` section 1.1 puts every clock
+    in the API because this tool is installed on buyers' machines and cannot be
+    updated: a copy from six months ago must be able to say something true
+    about today's policy, which it can only do by printing what arrives.
+
+    The `.get` is the same rule applied to a server older than this client:
+    missing fields print as blank rather than raising, because failing to show
+    a date is better than failing to download.
+    """
+    return state.get("timing") or {}
+
+
+def _refuse_if_closed(state: dict) -> None:
+    """Stop before planning a download the service will refuse file by file.
+
+    Not a policy decision made here. `access_state` was decided by Yukinoshita
+    and this reads it, the same way the balance is read; the server refuses
+    every request regardless, so a copy of this tool too old to know the flag
+    still fails safely, just later and once per file.
+
+    The reason to check early is that the alternative is a plan, a size, a
+    "Continue? [y/N]", and only then a wall of identical 403s.
+    """
+    timing = _timing(state)
+    if timing.get("access_state", "active") == "active":
+        return
+    raise SystemExit(timing.get("policy")
+                     or "This token can no longer download. Contact support "
+                        "with your order number.")
+
+
+def _time_left(timing: dict) -> str:
+    """How long is left, as the server counted it.
+
+    Not computed here. The subtraction needs a clock, and this one belongs to
+    the buyer's machine: a laptop an hour fast would report a deadline an hour
+    early, and one with the wrong timezone a day out. The server does the
+    arithmetic against its own clock and sends the answer.
+    """
+    if "expires_in_seconds" not in timing:
+        return ""
+    seconds = timing["expires_in_seconds"]
+    days = timing.get("days_remaining", seconds // 86400)
+    if days >= 1:
+        return f"   ({days} day{'' if days == 1 else 's'} left)"
+    if seconds > 0:
+        return f"   ({max(seconds // 3600, 1)} hour(s) left)"
+    return ""
+
+
 def cmd_token_set(args) -> int:
     # Resolving here rather than after the call, so a first-time user is asked
     # for their data root once, at the moment they set the tool up.
@@ -55,8 +108,12 @@ def cmd_token_set(args) -> int:
     with KomachiClient(s.api_url, args.token) as client:
         state = client.status()
     save_token(args.token)
-    print(f"Token stored. Product {state['product_id']}, valid until {state['valid_until']}.")
-    print(f"Token stored in {TOKEN_FILE} (0600). Data root is {s.root}.")
+    print(f"Token stored. Product {state['product_id']}.")
+    # Storing the token is the moment the access window starts, because the
+    # call above was a use of it. Saying so here is the only chance to say it
+    # before the clock is already running.
+    print(_timing(state).get("policy", ""))
+    print(f"\nToken stored in {TOKEN_FILE} (0600). Data root is {s.root}.")
     return 0
 
 
@@ -67,12 +124,24 @@ def _in_weeks(market_days: int) -> str:
 
 
 def cmd_token_status(args) -> int:
+    """Granted, used, balance, and both of the token's clocks.
+
+    The two deadlines are printed separately because they answer different
+    questions and only one of them applies at a time: before first use there is
+    a date by which to start, and after it a date by which to finish.
+    """
     with _client(args) as client:
         state = client.status()
     granted, remaining = state["granted_market_days"], state["remaining_market_days"]
+    timing = _timing(state)
     print(f"Product        {state['product_id']}")
     print(f"Token status   {state['token_status']}")
-    print(f"Valid until    {state['valid_until']}")
+    print(f"Access         {timing.get('access_state', 'unknown')}")
+    if timing.get("activated_at"):
+        print(f"First used     {timing['activated_at']}")
+        print(f"Access until   {timing.get('active_until', '')}{_time_left(timing)}")
+    else:
+        print(f"Use it by      {timing.get('redeem_by', '')}{_time_left(timing)}")
     print(f"Allowance      {granted} market-days{_in_weeks(granted)}")
     print(f"Remaining      {remaining} market-days{_in_weeks(remaining)}")
     if state["start_date"] or state["end_date"]:
@@ -84,6 +153,12 @@ def cmd_token_status(args) -> int:
     print(f"\nMarkets        {', '.join(state['markets']) or 'none catalogued'}")
     print("\nA market-day is one market on one date, covering every dataset published for it.")
     print("The allowance is not tied to a market: spend it wherever you like.")
+    # The service's own wording, printed as it arrives. This tool does not
+    # rephrase policy, because a rephrasing installed on a buyer's machine
+    # cannot be corrected when the policy changes.
+    policy = timing.get("policy")
+    if policy:
+        print(f"\n{policy}")
     return 0
 
 
@@ -343,6 +418,13 @@ def _show_plan(market, start, end, catalogued, pending, estimate, remaining) -> 
           + (f", {have} already present" if have else "")
           + f", {_human_bytes(sum(e['size_bytes'] or 0 for e in pending))}")
     print(f"Cost        {spend} of {remaining} remaining market-day(s)")
+    # Where the deadline belongs: next to the price, at the moment of deciding.
+    # Unlocking a hundred days a fortnight before access ends is a different
+    # decision from unlocking them on the first day.
+    timing = estimate.get("timing") or {}
+    if timing.get("active_until"):
+        print(f"Access until {timing['active_until'][:10]}{_time_left(timing)}"
+              f"   (re-downloads inside this window cost nothing)")
 
 
 def cmd_download(args) -> int:
@@ -362,11 +444,17 @@ def cmd_download(args) -> int:
     and 3.5 GB over a domestic link does not finish in one, so the tail of the
     manifest expired before it was ever used. Asking the API per file moves
     signing to the moment of use, where it cannot go stale.
+
+    There is no unlock step. A market-day that has not been opened is opened by
+    the first file asked for inside it, so a range that crosses owned and
+    unowned days does the right thing without the buyer sorting them first.
     """
     dest = _settings(args).root
 
     with _client(args) as client:
-        remaining = client.status()["remaining_market_days"]
+        state = client.status()
+        _refuse_if_closed(state)
+        remaining = state["remaining_market_days"]
 
         # stats reads the catalogue: it issues no URL and spends nothing.
         catalogued, start, end = _plan(client, args, remaining)
