@@ -179,3 +179,44 @@ def test_download_proceeds_while_access_is_live(monkeypatch):
     cli._refuse_if_closed({"timing": {"access_state": "active"}})
     # A server that sends no timing block at all must not be treated as closed.
     cli._refuse_if_closed({})
+
+
+def test_download_stops_when_the_allowance_cannot_cover_the_range(monkeypatch, capsys):
+    """The server refuses per file, so this changes what the buyer is asked, not
+    what they may have: without it they confirm a plan and watch it fail once
+    per file."""
+    import pytest
+
+    cli = _status_cli(monkeypatch, {**BASE, "remaining_market_days": 1,
+                                    "timing": {"access_state": "active"}})
+    monkeypatch.setattr(cli, "_plan", lambda client, args, remaining: (
+        [{"file_date": "2026-01-0%d" % n, "data_type": "Trade", "size_bytes": 10}
+         for n in (1, 2, 3)], "2026-01-01", "2026-01-03"))
+    monkeypatch.setattr(cli, "already_have", lambda entry, dest: False)
+
+    class Estimating(cli.KomachiClient):
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def status(self):
+            return {**BASE, "remaining_market_days": 1, "timing": {"access_state": "active"}}
+
+        def estimate(self, *a, **k):
+            return {"new_market_days": 3, "remaining_market_days": 1, "sufficient": False}
+
+    monkeypatch.setattr(cli, "_client", lambda args: Estimating())
+
+    code = cli.cmd_download(argparse.Namespace(
+        market="COINCHECK:BTC_SPOT", start="2026-01-01", days=3,
+        root=None, api_url=None, token=None, force=False, yes=True))
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "Not enough allowance" in out
+    assert "3 market-day(s) and 1 remain" in out

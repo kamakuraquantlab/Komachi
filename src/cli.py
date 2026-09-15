@@ -418,6 +418,10 @@ def _show_plan(market, start, end, catalogued, pending, estimate, remaining) -> 
           + (f", {have} already present" if have else "")
           + f", {_human_bytes(sum(e['size_bytes'] or 0 for e in pending))}")
     print(f"Cost        {spend} of {remaining} remaining market-day(s)")
+    if not estimate.get("sufficient", True):
+        print(f"\nNot enough allowance: this range needs {spend} market-day(s) and "
+              f"{remaining} remain.")
+        print("Narrow the range with --days, or start where you left off.")
     # Where the deadline belongs: next to the price, at the moment of deciding.
     # Unlocking a hundred days a fortnight before access ends is a different
     # decision from unlocking them on the first day.
@@ -469,6 +473,13 @@ def cmd_download(args) -> int:
 
         estimate = client.estimate(args.market, start, end)
         _show_plan(args.market, start, end, catalogued, pending, estimate, remaining)
+
+        # The service refuses per file anyway, so this changes nothing about
+        # what is permitted. It changes what the buyer is asked: without it
+        # they confirm a plan and then watch it fail once per file, which is
+        # the same shape of fault as being told a lapsed token is fine.
+        if not estimate.get("sufficient", True):
+            return 1
         if not args.yes and input("\nContinue? [y/N] ").strip().lower() not in ("y", "yes"):
             print("Cancelled.")
             return 0
