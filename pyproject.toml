@@ -30,7 +30,10 @@ dev = [
 ]
 
 [project.scripts]
-komachi = "cli:main"
+# `komachi.cli`, not a bare `cli`: a top-level module outside the package is
+# not installed by `packages.find`, so the command imported whichever `cli`
+# some other distribution happened to ship.
+komachi = "komachi.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
