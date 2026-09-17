@@ -6,15 +6,15 @@ place, is stored in one place, and never reaches the data directory a buyer
 might commit to git.
 """
 
-import json
 import os
 import stat
+from pathlib import Path
 
 import httpx
 import pytest
 
 from komachi import settings, weeks
-from komachi.client import ApiError, Credentials, KomachiClient
+from komachi.client import ApiError, KomachiClient
 
 
 # ---- the client ------------------------------------------------------------
@@ -65,46 +65,74 @@ def test_the_download_link_is_built_from_the_configured_api():
     assert c.auth_header() == {"Authorization": "Bearer hk_test"}
 
 
-def test_credentials_are_written_private_to_the_user(tmp_path):
-    path = tmp_path / "config.json"
-    Credentials("https://api.example", "hk_secret").save(path)
-    assert json.loads(path.read_text())["token"] == "hk_secret"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-def test_loading_credentials_that_are_not_there_is_not_an_error(tmp_path):
-    assert Credentials.load(tmp_path / "missing.json") is None
 
 
-def test_credentials_round_trip(tmp_path):
-    path = tmp_path / "config.json"
-    Credentials("https://api.example", "hk_secret").save(path)
-    loaded = Credentials.load(path)
-    assert (loaded.api_url, loaded.token) == ("https://api.example", "hk_secret")
 
 
 # ---- settings --------------------------------------------------------------
 
-def test_the_env_file_holds_the_root_and_the_api_but_never_the_token(tmp_path):
-    """A data directory can be committed to git; a token cannot."""
-    env = tmp_path / ".env"
-    settings.write_env_file(tmp_path / "data", "https://api.example", env)
-    text = env.read_text()
-    assert settings.ROOT_KEY in text
-    assert "hk_" not in text                       # no token value
-    assert str(settings.TOKEN_FILE) in text        # but it says where one lives
+def test_the_settings_file_is_readable_only_by_its_owner(tmp_path):
+    """It holds a token now, so the mode is part of the design rather than tidiness."""
+    env = tmp_path / "settings.env"
+    settings.write_env_file({settings.ROOT_KEY: "/data"}, env)
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
 
 
-def test_reading_an_env_file_ignores_comments_and_blank_lines(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text("# a comment\n\nKQL_ROOT_PATH=/data\nKQL_API_URL=https://api.example\n")
-    values = settings.load_env_file(env)
-    assert values["KQL_ROOT_PATH"] == "/data"
-    assert values["KQL_API_URL"] == "https://api.example"
+def test_saving_a_token_leaves_the_rest_of_the_file_alone(tmp_path):
+    env = tmp_path / "settings.env"
+    settings.write_env_file({settings.ROOT_KEY: "/data",
+                             settings.URL_KEY: "https://yukinoshita.example"}, env)
+    settings.save_token("hk_secret", env)
+    values = settings.read_env_file(env)
+    assert values[settings.TOKEN_KEY] == "hk_secret"
+    assert values[settings.ROOT_KEY] == "/data"
+    assert values[settings.URL_KEY] == "https://yukinoshita.example"
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
 
 
-def test_a_missing_env_file_is_an_empty_answer_not_a_failure(tmp_path):
-    assert settings.load_env_file(tmp_path / "nothing") == {}
+def test_reading_the_settings_file_ignores_comments_and_blank_lines(tmp_path):
+    env = tmp_path / "settings.env"
+    env.write_text("# a comment\n\nROOT_PATH=/data\nYUKINOSHITA_URL=https://yukinoshita.example\n")
+    values = settings.read_env_file(env)
+    assert values["ROOT_PATH"] == "/data"
+    assert values["YUKINOSHITA_URL"] == "https://yukinoshita.example"
+
+
+def test_a_missing_settings_file_is_an_empty_answer_not_a_failure(tmp_path):
+    assert settings.read_env_file(tmp_path / "nothing") == {}
+
+
+def test_setup_writes_only_the_root_so_the_whole_file_can_be_shown(tmp_path, capsys, monkeypatch):
+    """What setup prints back is the file itself, which is safe because a token
+    has not arrived yet. `token set` is what puts one there, later."""
+    env = tmp_path / "settings.env"
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    with pytest.raises(settings.SetupRequired):
+        settings.run_setup("komachi", env)
+    values = settings.read_env_file(env)
+    assert list(values) == [settings.ROOT_KEY], "only the root, so the file can be shown"
+    assert values[settings.ROOT_KEY] == str(Path(settings.DEFAULT_ROOT).expanduser())
+    assert Path(values[settings.ROOT_KEY]).is_dir(), "setup creates the directory it names"
+    assert values[settings.ROOT_KEY] in capsys.readouterr().out
+
+
+def test_an_explicit_root_settles_it_without_asking(tmp_path, monkeypatch):
+    """Anything unattended must not meet a prompt, which is why Akimoto passes
+    the root by environment and never reaches setup."""
+    monkeypatch.setenv(settings.ROOT_KEY, str(tmp_path / "elsewhere"))
+    monkeypatch.setattr(settings, "ENV_FILE", tmp_path / "absent.env")
+    s = settings.resolve()
+    assert s.root == tmp_path / "elsewhere"
+    assert s.yukinoshita_url == settings.DEFAULT_YUKINOSHITA_URL
+
+
+def test_setup_is_skippable_for_a_caller_that_cannot_answer(tmp_path, monkeypatch):
+    monkeypatch.delenv(settings.ROOT_KEY, raising=False)
+    monkeypatch.setattr(settings, "ENV_FILE", tmp_path / "absent.env")
+    s = settings.resolve(setup=False)
+    assert s.root == Path(settings.DEFAULT_ROOT).expanduser()
 
 
 # ---- weeks -----------------------------------------------------------------

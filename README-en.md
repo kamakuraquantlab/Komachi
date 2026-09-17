@@ -9,7 +9,7 @@ pip install 'kamakuraquantlab-komachi[duckdb]'
 komachi token set --token hk_...
 komachi download --market GMO:BTC_JPY --start 2026-01-01
 komachi duckdb
-duckdb ~/kql-data/kql.duckdb
+duckdb ~/kamakuraquantlab-data/kamakuraquantlab.duckdb
 ```
 
 ```sql
@@ -62,7 +62,7 @@ komachi token set --token hk_...
 ```
 
 First run asks where data should go and records the answer in `.env` in the
-current directory. The token is kept separately, at `~/.komachi/config.json`,
+home directory. It holds the token too, at mode 0600,
 mode 0600.
 
 ### 1.2  Check the balance and the deadlines
@@ -196,7 +196,7 @@ time (JST)            best bid        best ask      spread
 
 ```bash
 komachi duckdb
-duckdb ~/kql-data/kql.duckdb
+duckdb ~/kamakuraquantlab-data/kamakuraquantlab.duckdb
 ```
 
 ```sql
@@ -211,7 +211,7 @@ publishing later.
 
 ## 2  Where files go
 
-`$ROOT_PATH`, else `$KQL_ROOT_PATH`, else `~/kql-data`. Inside it, the same
+`$ROOT_PATH`, else the settings file, else `~/kamakuraquantlab-data`. Inside it, the same
 Hive-partitioned tree the data was produced in:
 
 ```

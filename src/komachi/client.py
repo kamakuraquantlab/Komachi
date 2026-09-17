@@ -4,14 +4,9 @@ cli.py goes through the same endpoints the React UI uses, so anything the
 website can do is scriptable and vice versa.
 """
 
-import json
-from dataclasses import dataclass
-from pathlib import Path
-
 import httpx
 
 DEFAULT_API_URL = "http://127.0.0.1:9740"
-CONFIG_PATH = Path("~/.komachi/config.json").expanduser()
 
 
 class ApiError(RuntimeError):
@@ -21,25 +16,6 @@ class ApiError(RuntimeError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
-
-
-@dataclass
-class Credentials:
-    api_url: str
-    token: str
-
-    def save(self, path: Path = CONFIG_PATH) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"api_url": self.api_url, "token": self.token}, indent=2))
-        # The token is a bearer credential: keep it out of other users' reach.
-        path.chmod(0o600)
-
-    @classmethod
-    def load(cls, path: Path = CONFIG_PATH) -> "Credentials | None":
-        if not path.exists():
-            return None
-        data = json.loads(path.read_text())
-        return cls(api_url=data.get("api_url", DEFAULT_API_URL), token=data["token"])
 
 
 class KomachiClient:

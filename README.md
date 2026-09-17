@@ -51,7 +51,7 @@ komachi token set --token hk_...
 取り込み、DuckDB 連携、ファイル検査を使う場合は上記の `duckdb` エクストラを指定します。
 
 初回はデータの保存先を尋ねられ、実行ディレクトリの `.env` に記録されます。
-トークンは `.env` ではなく `~/.komachi/config.json`（パーミッション 0600）に保存されます。
+トークンは設定ファイル `~/.kamakuraquantlab.env`（パーミッション 0600）に保存されます。
 データディレクトリをそのままバージョン管理下に置いても、資格情報が混入しません。
 
 ### 1.2 残高と期限の確認
@@ -189,7 +189,7 @@ time (JST)            best bid        best ask      spread
 
 ```bash
 komachi duckdb
-duckdb ~/kql-data/kql.duckdb
+duckdb ~/kamakuraquantlab-data/kamakuraquantlab.duckdb
 ```
 
 ```sql
@@ -242,14 +242,14 @@ market-day は 1 マーケットの 1 日分で、同じ日の板と約定を合
 データは、収集時と同じ Hive 形式のディレクトリに保存されます。
 
 ```text
-$KQL_ROOT_PATH/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
+$ROOT_PATH/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
 ```
 
 DuckDB、PyArrow、Spark、Athena のいずれも `dataset`・`exchange`・`symbol`・`date` を
 パスから列として認識します。1 年分でも次の 1 行で読み込めます。
 
 ```sql
-SELECT * FROM read_parquet('~/kql-data/bronze/dataset=Trade/**/*.parquet', hive_partitioning = 1);
+SELECT * FROM read_parquet('~/kamakuraquantlab-data/bronze/dataset=Trade/**/*.parquet', hive_partitioning = 1);
 ```
 
 ## 4 日付の扱い

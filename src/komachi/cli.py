@@ -2,8 +2,8 @@
 
 Run as: python src/cli.py <command> [options]
 
-Auth resolves in the order doc/01 section 4.3 gives: --token, then
-KQL_TOKEN, then the config file written by `token set`.
+Auth resolves as --token, then KAMAKURAQUANTLAB_TOKEN in the environment, then
+the TOKEN line `token set` writes into ~/.kamakuraquantlab.env.
 """
 
 import argparse
@@ -19,22 +19,22 @@ from komachi.download import already_have, download_file
 from komachi import jst
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
 from komachi.layout import data_path, local_inventory, view_sql
-from komachi.settings import DEFAULT_ROOT, ENV_FILE, TOKEN_FILE, resolve, save_token
+from komachi.settings import DEFAULT_ROOT, ENV_FILE, ENV_TOKEN_KEY, resolve, save_token
 from komachi.weeks import describe, shapes
 
 
 def _settings(args):
-    return resolve(getattr(args, "root", None), args.api_url, args.token)
+    return resolve(getattr(args, "root", None), args.api_url, args.token, tool="komachi")
 
 
 def _client(args) -> KomachiClient:
     s = _settings(args)
     if not s.token:
         raise SystemExit(
-            "No token found. Pass --token, set KQL_TOKEN, or run:\n"
+            f"No token found. Pass --token, set {ENV_TOKEN_KEY}, or run:\n"
             "  komachi token set --token <TOKEN>"
         )
-    return KomachiClient(s.api_url, s.token)
+    return KomachiClient(s.yukinoshita_url, s.token)
 
 
 def _human_bytes(n: int | None) -> str:
@@ -104,8 +104,8 @@ def _time_left(timing: dict) -> str:
 def cmd_token_set(args) -> int:
     # Resolving here rather than after the call, so a first-time user is asked
     # for their data root once, at the moment they set the tool up.
-    s = resolve(getattr(args, "root", None), args.api_url, args.token)
-    with KomachiClient(s.api_url, args.token) as client:
+    s = resolve(getattr(args, "root", None), args.api_url, args.token, tool="komachi")
+    with KomachiClient(s.yukinoshita_url, args.token) as client:
         state = client.status()
     save_token(args.token)
     print(f"Token stored. Product {state['product_id']}.")
@@ -113,7 +113,8 @@ def cmd_token_set(args) -> int:
     # call above was a use of it. Saying so here is the only chance to say it
     # before the clock is already running.
     print(_timing(state).get("policy", ""))
-    print(f"\nToken stored in {TOKEN_FILE} (0600). Data root is {s.root}.")
+    # The file holds the token now, so it is named rather than shown.
+    print(f"\nToken saved to {ENV_FILE} (0600). Data root is {s.root}.")
     return 0
 
 
@@ -627,16 +628,16 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=f"""
 settings
   Downloaded data goes under one root directory. On first use Komachi asks for
-  it and writes the answer to {ENV_FILE} in the current directory:
+  it, writes {ENV_FILE}, shows you the file, and stops. Run the command again
+  and it proceeds from there.
 
-      KQL_ROOT_PATH=<your data root>     default {DEFAULT_ROOT}
-      KQL_API_URL=<api address>
+      ROOT_PATH=<your data root>         default {DEFAULT_ROOT}
+      TOKEN=<your purchase token>        written by `token set`
 
   Edit that file to change either, or override per run with --root and
-  --api-url, or by setting ROOT_PATH or KQL_ROOT_PATH in the environment.
-
-  Your purchase token is kept separately in {TOKEN_FILE} at mode 0600, not in
-  {ENV_FILE}, so a data directory can be committed to git without leaking it.
+  --token, or by setting ROOT_PATH in the environment. The file is mode 0600
+  because it holds the token, and it lives in your home directory rather than
+  beside the data so it is one answer from every directory. Hase reads it too.
 
 layout
   <root>/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
@@ -651,7 +652,7 @@ downloading
   remaining allowance covers. It shows the range, size and cost before
   fetching anything, and re-running continues an interrupted run for free.
 """)
-    parser.add_argument("--token", help="Purchase token; overrides KQL_TOKEN and stored config")
+    parser.add_argument("--token", help="Purchase token; overrides the environment and the settings file")
     parser.add_argument("--api-url", help="Kamakura Quant Lab API base URL")
     parser.add_argument("--root", help=f"Data root; overrides {ENV_FILE}. Default {DEFAULT_ROOT}")
     sub = parser.add_subparsers(dest="command", required=True)
