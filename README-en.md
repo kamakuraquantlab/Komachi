@@ -5,7 +5,7 @@
 The **Kamakura Quant Lab** command line client. Fetches historical market data and lays it out so DuckDB can query it immediately.
 
 ```bash
-pip install 'komachi[duckdb]'
+pip install 'kamakuraquantlab-komachi[duckdb]'
 komachi token set --token hk_...
 komachi download --market GMO:BTC_JPY --start 2026-01-01
 komachi duckdb
@@ -57,7 +57,7 @@ token*. It is shown once, and you can issue another whenever you need one —
 doing so stops the previous one working.
 
 ```bash
-pip install 'komachi[duckdb]'
+pip install 'kamakuraquantlab-komachi[duckdb]'
 komachi token set --token hk_...
 ```
 

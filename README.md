@@ -43,11 +43,11 @@ API がデータ本体を中継することはありません。
 発行し直すと、それまでのトークンは使えなくなります。
 
 ```bash
-pip install 'komachi[duckdb]'
+pip install 'kamakuraquantlab-komachi[duckdb]'
 komachi token set --token hk_...
 ```
 
-最小構成は `pip install komachi`（`httpx` のみ）です。
+最小構成は `pip install kamakuraquantlab-komachi`（`httpx` のみ）です。
 取り込み、DuckDB 連携、ファイル検査を使う場合は上記の `duckdb` エクストラを指定します。
 
 初回はデータの保存先を尋ねられ、実行ディレクトリの `.env` に記録されます。
