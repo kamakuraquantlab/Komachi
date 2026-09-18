@@ -142,7 +142,7 @@ def cmd_token_status(args) -> int:
         print(f"First used     {timing['activated_at']}")
         print(f"Access until   {timing.get('active_until', '')}{_time_left(timing)}")
     else:
-        print(f"Use it by      {timing.get('redeem_by', '')}{_time_left(timing)}")
+        print(f"Usable until   {timing.get('login_until', '')}{_time_left(timing)}")
     print(f"Allowance      {granted} market-days{_in_weeks(granted)}")
     print(f"Remaining      {remaining} market-days{_in_weeks(remaining)}")
     if state["start_date"] or state["end_date"]:

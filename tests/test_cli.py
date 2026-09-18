@@ -84,21 +84,21 @@ def test_status_prints_the_policy_sentence_it_was_given(monkeypatch, capsys):
     assert "access" in out.lower()
 
 
-def test_status_shows_the_redemption_deadline_before_first_use(monkeypatch, capsys):
+def test_status_shows_the_purchase_deadline_before_first_use(monkeypatch, capsys):
     """The two deadlines answer different questions, and only one applies."""
     cli = _status_cli(monkeypatch, {**BASE, "timing": {
         "access_state": "redeemable",
         "activated_at": None,
         "active_until": None,
-        "redeem_by": "2026-12-10T10:00:00+00:00",
+        "login_until": "2026-12-10T10:00:00+00:00",
         "policy": "Not used yet.",
     }})
 
     cli.cmd_token_status(argparse.Namespace())
     out = capsys.readouterr().out
 
-    assert "Use it by      2026-12-10T10:00:00+00:00" in out
-    assert "Access until" not in out, "there is no access window yet to report"
+    assert "Usable until   2026-12-10T10:00:00+00:00" in out
+    assert "Access until" not in out, "there is no download period yet to report"
 
 
 def test_status_survives_a_server_that_sends_no_timing(monkeypatch, capsys):
