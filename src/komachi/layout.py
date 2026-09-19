@@ -19,13 +19,11 @@ room for derived silver and gold datasets computed locally without colliding
 with delivered files, which is how the warehouse itself is organised.
 """
 
-import os
 import re
 from pathlib import Path
 
 BRONZE = "bronze"
 DATA_TYPES = ("Trade", "OrderBook")
-DEFAULT_ROOT = "~/kamakuraquantlab-data"
 
 _MARKET_RE = re.compile(r"^[A-Z0-9]+:[A-Z0-9_]+$")
 
@@ -40,17 +38,6 @@ def parse_market(market: str) -> tuple[str, str]:
         raise InvalidMarketError(f"Market must look like EXCHANGE:SYMBOL, got {market!r}")
     exchange, symbol = market.split(":", 1)
     return exchange, symbol
-
-
-def root_path(override: str | None = None) -> Path:
-    """An explicit path, then ROOT_PATH in the environment, then the default.
-
-    The settings file is not read here. `settings.resolve` is what reads it,
-    and everything with a CLI behind it goes through that; this is the
-    fallback for a caller that has neither.
-    """
-    raw = override or os.environ.get("ROOT_PATH") or DEFAULT_ROOT
-    return Path(raw).expanduser()
 
 
 def data_path(root: Path, market: str, data_type: str, file_date: str) -> Path:

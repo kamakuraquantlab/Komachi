@@ -109,7 +109,8 @@ def run_setup(tool: str, path: Path | None = None) -> None:
     existing = read_env_file(path)
     replacing = bool(existing) and ROOT_KEY not in existing
 
-    print(f"{tool} keeps downloaded data under one root directory.")
+    print(f"{tool} keeps data under one root directory: Komachi downloads into "
+          "it, Hase reads from it.")
     print(f"Leave blank for {DEFAULT_ROOT}.\n")
     root = ""
     if sys.stdin.isatty():
@@ -130,29 +131,52 @@ def run_setup(tool: str, path: Path | None = None) -> None:
     raise SetupRequired(0)
 
 
+
+def data_root(override: str | None = None, *, env: bool = False,
+              setup: bool = False, tool: str = "komachi",
+              default: str | None = None) -> Path:
+    """Where the data is. The one function to ask, from anywhere.
+
+    `komachi.data_root()` with nothing passed is the whole answer for a script:
+    ROOT_PATH from the settings file, which is the answer its reader already
+    gave when Komachi set itself up. It deliberately ignores the environment,
+    because a script that can be pointed somewhere else by a stray variable is
+    a script whose numbers cannot be placed.
+
+    A command line passes `env=True` and its own --root, since a flag and a
+    variable are per-run answers somebody typed on purpose, and `setup=True`,
+    which turns "nothing has settled this" into the question that settles it.
+    A caller that cannot answer a prompt passes a `default` instead and gets
+    it; with neither, an unset root raises rather than guessing.
+    """
+    root = override or (os.environ.get(ROOT_KEY) if env else None) or read_env_file().get(ROOT_KEY)
+    if root is None:
+        if setup:
+            run_setup(tool)     # writes the file and stops the program
+        if default is None:
+            raise SetupRequired(
+                f"No {ROOT_KEY} in {ENV_FILE}. Run komachi once to set it up.")
+        root = default
+    return Path(root).expanduser()
+
+
 def resolve(root_override: str | None = None, url_override: str | None = None,
             token_override: str | None = None, tool: str = "komachi",
             setup: bool = True) -> Settings:
     """Settle the root, the service address and the token.
 
-    Precedence is explicit flag, then environment, then the settings file. A
-    flag should win over a file the user forgot they wrote.
-
-    When no root is settled by any of the three, the tool has not been set up,
-    and `setup` decides what that means. Komachi and Hase run setup, because
-    they are what a buyer installs. Anything running unattended passes
-    `setup=False` and gets the default instead of a prompt it cannot answer.
+    Precedence is explicit flag, then environment, then the settings file, for
+    each of the three: a flag should win over a file the user forgot they
+    wrote. The root itself is `data_root`'s business, including what an unset
+    one means; anything running unattended passes `setup=False` and gets the
+    default instead of a prompt it cannot answer.
     """
     stored = read_env_file()
 
-    root = root_override or os.environ.get(ROOT_KEY) or stored.get(ROOT_KEY)
     url = (url_override or os.environ.get(URL_KEY) or stored.get(URL_KEY)
            or DEFAULT_YUKINOSHITA_URL)
     token = token_override or os.environ.get(ENV_TOKEN_KEY) or stored.get(TOKEN_KEY)
+    root = data_root(root_override, env=True, setup=setup, tool=tool,
+                     default=DEFAULT_ROOT)
 
-    if root is None:
-        if setup:
-            run_setup(tool)
-        root = DEFAULT_ROOT
-
-    return Settings(root=Path(root).expanduser(), yukinoshita_url=url, token=token)
+    return Settings(root=root, yukinoshita_url=url, token=token)

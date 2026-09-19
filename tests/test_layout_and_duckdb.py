@@ -8,25 +8,8 @@ from komachi.layout import (
     data_path,
     dataset_glob,
     local_inventory,
-    root_path,
     view_sql,
 )
-
-
-def test_root_path_prefers_explicit_then_env(tmp_path, monkeypatch):
-    monkeypatch.delenv("ROOT_PATH", raising=False)
-    monkeypatch.delenv("KQL_ROOT_PATH", raising=False)
-    assert root_path(str(tmp_path)) == tmp_path
-
-    monkeypatch.setenv("ROOT_PATH", "/from/env")
-    assert root_path(None).as_posix() == "/from/env"
-    assert root_path(str(tmp_path)) == tmp_path  # explicit still wins
-
-
-def test_root_path_falls_back_to_default(monkeypatch):
-    monkeypatch.delenv("ROOT_PATH", raising=False)
-    monkeypatch.delenv("KQL_ROOT_PATH", raising=False)
-    assert root_path(None).name == "kamakuraquantlab-data"
 
 
 def test_invalid_market_is_rejected(tmp_path):

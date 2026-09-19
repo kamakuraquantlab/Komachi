@@ -118,6 +118,45 @@ def test_setup_writes_only_the_root_so_the_whole_file_can_be_shown(tmp_path, cap
     assert values[settings.ROOT_KEY] in capsys.readouterr().out
 
 
+def test_a_script_gets_the_root_from_the_file_and_only_the_file(tmp_path, monkeypatch):
+    """What `komachi.data_root()` is for. A published script whose numbers can
+    be moved by a stray variable is a script whose numbers cannot be placed."""
+    import komachi
+
+    env = tmp_path / ".kamakuraquantlab.env"
+    env.write_text('ROOT_PATH="/from/the/file"\nTOKEN=hk_secret\n')
+    monkeypatch.setattr(settings, "ENV_FILE", env)
+    monkeypatch.setenv(settings.ROOT_KEY, "/from/the/environment")
+
+    assert komachi.data_root() == Path("/from/the/file")
+    assert settings.data_root is komachi.data_root, "one function, exported"
+
+
+def test_a_command_line_may_be_pointed_elsewhere_for_one_run(tmp_path, monkeypatch):
+    """A flag and a variable are answers somebody typed on purpose, so the two
+    CLIs pass env=True and their own --root. Precedence: flag, environment, file."""
+    env = tmp_path / ".kamakuraquantlab.env"
+    env.write_text("ROOT_PATH=/from/the/file\n")
+    monkeypatch.setattr(settings, "ENV_FILE", env)
+
+    monkeypatch.setenv(settings.ROOT_KEY, "/from/the/environment")
+    assert settings.data_root(env=True) == Path("/from/the/environment")
+    assert settings.data_root("/from/a/flag", env=True) == Path("/from/a/flag")
+    monkeypatch.delenv(settings.ROOT_KEY)
+    assert settings.data_root(env=True) == Path("/from/the/file")
+
+
+def test_an_unset_root_is_refused_rather_than_guessed(tmp_path, monkeypatch):
+    """No file, no setup to run, no default: the caller is told what to do
+    instead of being handed an empty directory that reports no data."""
+    monkeypatch.delenv(settings.ROOT_KEY, raising=False)
+    monkeypatch.setattr(settings, "ENV_FILE", tmp_path / "absent.env")
+
+    with pytest.raises(settings.SetupRequired, match="absent.env"):
+        settings.data_root()
+    assert settings.data_root(default="~/fallback").name == "fallback"
+
+
 def test_an_explicit_root_settles_it_without_asking(tmp_path, monkeypatch):
     """Anything unattended must not meet a prompt, which is why Akimoto passes
     the root by environment and never reaches setup."""

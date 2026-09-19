@@ -50,9 +50,10 @@ komachi token set --token hk_...
 最小構成は `pip install kamakuraquantlab-komachi`（`httpx` のみ）です。
 取り込み、DuckDB 連携、ファイル検査を使う場合は上記の `duckdb` エクストラを指定します。
 
-初回はデータの保存先を尋ねられ、実行ディレクトリの `.env` に記録されます。
-トークンは設定ファイル `~/.kamakuraquantlab.env`（パーミッション 0600）に保存されます。
-データディレクトリをそのままバージョン管理下に置いても、資格情報が混入しません。
+初回はデータの保存先を尋ねられ、設定ファイル `~/.kamakuraquantlab.env`
+（パーミッション 0600）に `ROOT_PATH` として記録されます。トークンも同じファイルです。
+ホームディレクトリに置くため、データディレクトリをそのままバージョン管理下に置いても
+資格情報が混入せず、どのディレクトリから実行しても答えは 1 つです。
 
 ### 1.2 残高と期限の確認
 
@@ -243,6 +244,18 @@ market-day は 1 マーケットの 1 日分で、同じ日の板と約定を合
 ```text
 $ROOT_PATH/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
 ```
+
+自分のスクリプトから保存先を知るには `komachi.data_root()` を呼びます。
+初期設定で答えた `ROOT_PATH` だけを読み、環境変数も既定値も見ません。
+未設定なら、その場で設定を促して停止します。
+
+```python
+import komachi
+
+root = komachi.data_root()      # ~/.kamakuraquantlab.env の ROOT_PATH
+```
+
+Hase も同じ関数を呼んでいます。保存先の答えは 1 か所にしかありません。
 
 DuckDB、PyArrow、Spark、Athena のいずれも `dataset`・`exchange`・`symbol`・`date` を
 パスから列として認識します。1 年分でも次の 1 行で読み込めます。
