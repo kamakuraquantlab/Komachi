@@ -114,13 +114,17 @@ def test_imported_file_matches_the_trade_schema(tmp_path):
 
     results = binance_vision.import_range("BTC_USDT", "2026-01-01", "2026-01-01", tmp_path,
                                           client=client)
-    table = pq.read_table(results[0].path)
 
-    # The data columns match the Trade schema, and pyarrow additionally recovers
-    # dataset/exchange/symbol/date from the Hive path -- the same discovery that
-    # works against the parquet warehouse, which is the point.
-    assert table.column_names[:4] == ["ts", "side", "price", "size"]
-    assert {"dataset", "exchange", "symbol", "date"} <= set(table.column_names)
+    # The data columns match the Trade schema, and reading the tree recovers
+    # dataset/exchange/symbol/date from the Hive path -- the same discovery
+    # that works against the parquet warehouse, which is the point.
+    #
+    # Read the tree, not the file. pyarrow recovered the partition columns from
+    # a single file's path up to 22 and does not from 25, so asserting it there
+    # tests the reader's version rather than what was written.
+    assert pq.read_table(results[0].path).column_names == ["ts", "side", "price", "size"]
+    tree = pq.read_table(tmp_path / "bronze")
+    assert {"dataset", "exchange", "symbol", "date"} <= set(tree.column_names)
 
 
 def test_existing_day_is_skipped(tmp_path):
