@@ -163,16 +163,53 @@ def cmd_token_status(args) -> int:
     return 0
 
 
+def _gap_summary(gaps: list[dict], limit: int = 2) -> str:
+    """Gaps as one cell, newest first, with a count when there are more.
+
+    A market-year can carry a dozen; printing them all would turn a table into
+    a list, and the ones a buyer is about to download are the recent ones.
+    """
+    if not gaps:
+        return "none"
+    spans = [g["start"] if g["start"] == g["end"] else f"{g['start']}..{g['end']}"
+             for g in sorted(gaps, key=lambda g: g["start"], reverse=True)]
+    shown = "; ".join(spans[:limit])
+    return shown if len(spans) <= limit else f"{shown}; +{len(spans) - limit} more"
+
+
 def cmd_markets(args) -> int:
+    """What the token covers, and what the seller holds for each market.
+
+    Two calls, because they answer different questions and only one of them is
+    about this buyer. `/api/datasets/markets` is what the token may fetch;
+    coverage is the public record of what exists, gaps included. Showing the
+    span and the datasets here saves the round trip through the website that
+    every buyer was making before choosing a date range.
+    """
     with _client(args) as client:
         result = client.markets()
-    for market in result["markets"]:
-        print(market)
+        coverage = {m["market"]: m for m in client.coverage()}
 
-    # A buyer looking for Binance should be told where it is, not left to
-    # conclude it is missing.
+    rows = [coverage.get(m, {"market": m}) for m in result["markets"]]
+    if not rows:
+        print("This token covers no markets yet.")
+        return 0
+
+    print(f"{'market':22} {'datasets':17} {'days':>5}  {'range':25} missing")
+    for r in rows:
+        span = (f"{r['start']} .. {r['end']}" if r.get("start") else "-")
+        print(f"{r['market']:22} {','.join(r.get('datasets', [])) or '-':17} "
+              f"{r.get('market_days', 0):>5}  {span:25} {_gap_summary(r.get('gaps', []))}")
+
+    print("\nDates are Asia/Tokyo days. 'missing' lists days inside the span with")
+    print("no file; dates outside it are not yet collected rather than missing.")
+    print("Coverage, schema and quality rules:  https://kamakuraquantlab.jp/data/")
+
+    # A buyer looking for a venue's trade history should be told where it is,
+    # not left to conclude it is missing.
     for source in result.get("external_sources", []):
-        print(f"\n{source['exchange']}: not sold by Kamakura Quant Lab -- available free from {source['name']}")
+        print(f"\n{source['exchange']} {source['data_type']}: published by the venue, "
+              f"not sold here -- {source['name']}")
         print(f"  {source['reason']}")
         print(f"  Source:   {source['url']}")
         print(f"  Importer: {source['importer_command']}")
@@ -313,92 +350,6 @@ def cmd_book(args) -> int:
 def _jst_clock(ts: float) -> str:
     import datetime as _dt
     return _dt.datetime.fromtimestamp(ts, jst.TOKYO).strftime("%H:%M:%S.%f")[:12]
-
-
-def cmd_catalog(args) -> int:
-    """What the seller holds for a market, with per-day quality.
-
-    Defaults to the most recent week rather than the whole archive: the common
-    question is "what is there now", and a market-year is 730 lines.
-    """
-    with _client(args) as client:
-        if args.start or args.end:
-            files = client.stats(args.market, start=args.start, end=args.end)
-            scope = f"{args.start or 'earliest'} .. {args.end or 'latest'}"
-        else:
-            files = client.stats(args.market, days=args.days)
-            scope = f"latest {args.days} day(s)"
-
-    if not files:
-        print(f"Nothing catalogued for {args.market} in {scope}.")
-        return 0
-
-    # One row per market-day, with the datasets folded in: a market-day is the
-    # unit a buyer spends, so it is the unit worth showing.
-    days: dict[str, dict] = {}
-    for f in files:
-        d = days.setdefault(f["file_date"], {"date": f["file_date"], "types": [], "bytes": 0,
-                                             "rows": 0, "missing": 0, "partial": False})
-        d["types"].append(f["data_type"])
-        d["bytes"] += f["size_bytes"] or 0
-        d["rows"] += f["row_count"] or 0
-        d["missing"] = max(d["missing"], f["missing_minutes"] or 0)
-        d["partial"] = d["partial"] or bool(f["partial"])
-
-    print(f"{args.market}   {scope}\n")
-    print(f"{'date':12} {'datasets':20} {'rows':>12} {'size':>9} {'gap':>6}  note")
-    for d in sorted(days.values(), key=lambda x: x["date"]):
-        note = "PARTIAL" if d["partial"] else ("" if d["missing"] < 60 else "sparse")
-        gap = f"{d['missing']}m" if d["missing"] else "-"
-        print(f"{d['date']:12} {','.join(sorted(d['types'])):20} {d['rows']:>12,} "
-              f"{_human_bytes(d["bytes"]):>9} {gap:>6}  {note}")
-    print(f"\n{len(days)} market-day(s). 'gap' is minutes with no record in the JST day.")
-    return 0
-
-
-def cmd_calendar(args) -> int:
-    """Every catalogued day for a market, and where each one stands.
-
-    Four states, and keeping them apart matters. "Owned" and "on disk" were
-    previously one label called "downloaded", which is wrong in both
-    directions: a market-day is paid for when its first URL is issued, whether
-    or not the bytes ever arrived, and a buyer who deletes a file still owns
-    the day and can fetch it again for nothing.
-    """
-    root = _settings(args).root
-    with _client(args) as client:
-        days = client.calendar(args.market)
-    if not days:
-        print(f"Nothing catalogued for {args.market}.")
-        return 0
-
-    counts = {"on disk": 0, "owned": 0, "available": 0, "-": 0}
-    print(f"{'date':12} {'state':11} {'quality':10} datasets")
-    for day in days:
-        if not day["available"]:
-            state = "-"
-        elif not day["consumed"]:
-            state = "available"
-        elif all(
-            data_path(root, args.market, dt, day["file_date"]).is_file()
-            for dt in day["data_types"]
-        ):
-            state = "on disk"
-        else:
-            state = "owned"
-        counts[state] += 1
-
-        gap = day.get("missing_minutes") or 0
-        quality = "PARTIAL" if day.get("partial") else (f"{gap}m gap" if gap >= 60 else "")
-        print(f"{day['file_date']:12} {state:11} {quality:10} {', '.join(day['data_types']) or '-'}")
-
-    print(f"\n{counts['on disk']} on disk, {counts['owned']} owned but not fetched, "
-          f"{counts['available']} available to unlock, {counts['-']} not published.")
-    if counts["available"]:
-        print(f"Unlocking all {counts['available']} would cost {counts['available']} market-day(s).")
-    if counts["owned"]:
-        print(f"The {counts['owned']} owned day(s) are already paid for: fetching them costs nothing.")
-    return 0
 
 
 def _show_plan(market, start, end, catalogued, pending, estimate, remaining) -> None:
@@ -668,7 +619,7 @@ downloading
         "status", help="Allowance, balance and expiry"
     ).set_defaults(func=cmd_token_status)
     sub.add_parser(
-        "markets", help="List markets available to this token, and external sources"
+        "markets", help="Markets this token covers: datasets, span, and known gaps"
     ).set_defaults(func=cmd_markets)
 
     p = sub.add_parser(
@@ -704,17 +655,6 @@ downloading
     p.add_argument("--rows", type=int, default=20)
     p.add_argument("--tail", action="store_true", help="Show the end of the day instead of the start")
     p.set_defaults(func=cmd_book)
-
-    p = sub.add_parser("catalog", help="What the seller holds for a market, with per-day quality")
-    p.add_argument("--market", required=True)
-    p.add_argument("--start", help="First JST date, inclusive")
-    p.add_argument("--end", help="Last JST date, inclusive")
-    p.add_argument("--days", type=int, default=7, help="Most recent N days when no range is given")
-    p.set_defaults(func=cmd_catalog)
-
-    p = sub.add_parser("calendar", help="Show available and downloaded dates for a market")
-    p.add_argument("--market", required=True)
-    p.set_defaults(func=cmd_calendar)
 
     p = sub.add_parser("download", help="Download from a start date. Resumable")
     p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")

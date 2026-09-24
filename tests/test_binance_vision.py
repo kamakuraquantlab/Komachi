@@ -119,10 +119,13 @@ def test_imported_file_matches_the_trade_schema(tmp_path):
     # dataset/exchange/symbol/date from the Hive path -- the same discovery
     # that works against the parquet warehouse, which is the point.
     #
-    # Read the tree, not the file. pyarrow recovered the partition columns from
-    # a single file's path up to 22 and does not from 25, so asserting it there
-    # tests the reader's version rather than what was written.
-    assert pq.read_table(results[0].path).column_names == ["ts", "side", "price", "size"]
+    # The file's own schema, not a read of it. `read_table` on a path inside a
+    # Hive tree recovers the partition columns on some pyarrow versions and not
+    # others -- 22 does, and the assertion below used to fail on it -- so going
+    # through the reader tests the reader's version rather than what was
+    # written. `schema_arrow` is what is in the file.
+    written = pq.ParquetFile(results[0].path).schema_arrow.names
+    assert written == ["ts", "side", "price", "size"]
     tree = pq.read_table(tmp_path / "bronze")
     assert {"dataset", "exchange", "symbol", "date"} <= set(tree.column_names)
 

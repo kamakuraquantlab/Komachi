@@ -55,8 +55,14 @@ class KomachiClient:
         """Deliverable markets plus the external sources Kamakura Quant Lab refers to."""
         return self._request("GET", "/api/datasets/markets")
 
-    def calendar(self, market: str) -> list[dict]:
-        return self._request("GET", "/api/datasets/calendar", params={"market": market})["days"]
+    def coverage(self) -> list[dict]:
+        """Per-market span, datasets and gaps, for every market in the catalogue.
+
+        The same endpoint `/data/` reads, and open for the same reason: the
+        terms promise the known gaps are published, and a disclosure behind a
+        token is a disclosure to people who have already paid.
+        """
+        return self._request("GET", "/api/datasets/coverage")["markets"]
 
     def stats(self, market: str, start: str | None = None, end: str | None = None,
               days: int | None = None) -> list[dict]:

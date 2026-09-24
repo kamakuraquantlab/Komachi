@@ -114,23 +114,25 @@ tsurugaoka にはサインインでき、利用状況と終了日を確認でき
 
 ### 1.3 収録状況の確認
 
-どのマーケットが使えるかを確認します。
+どのマーケットが使えるか、それぞれ何が収録されているかを確認します。
 
 ```bash
 komachi markets
-komachi catalog --market COINCHECK:BTC_SPOT --days 3
 ```
 
 ```text
-date         datasets                     rows      size    gap  note
-2026-09-01   OrderBook,Trade           264,447    24.8MB     8m
-2026-09-02   OrderBook,Trade           274,792    26.7MB     1m
-2026-09-03   OrderBook,Trade           280,067    27.9MB     9m
-
-3 market-day(s). 'gap' is minutes with no record in the JST day.
+market                 datasets           days  range                     missing
+BINANCE:BTC_USDT       OrderBook           424  2025-07-01 .. 2026-09-12  2026-04-03..2026-04-09; ...
+COINCHECK:BTC_SPOT     OrderBook,Trade     431  2025-07-01 .. 2026-09-12  2026-04-02..2026-04-09
+GMO:BTC_JPY            OrderBook           430  2025-07-01 .. 2026-09-12  2026-04-02..2026-04-09; 2025-07-05
 ```
 
-`gap` は、その日のうち記録のない分数です。取得前に品質を確認できます。
+`missing` は収録期間内で欠測している日付です。
+収録期間の前後は、欠測ではなく未収集として扱います。
+日ごとの品質や、スキーマ、品質基準は
+[JP Market Archive](https://kamakuraquantlab.jp/data/) のページに掲載しています。
+
+取得済みのデータは `komachi local` で確認できます。
 
 ### 1.4 取得
 
@@ -212,9 +214,8 @@ Yukinoshita API または無償公開元との通信を伴うコマンドです�
 |---|---|---|
 | `komachi token set --token TOKEN` | トークンを検証して保存 | なし |
 | `komachi token status` | 付与数、使用済み、残高、2 つの期限 | なし |
-| `komachi markets` | 利用できるマーケットと、無償公開元の案内 | なし |
-| `komachi calendar --market MARKET` | 公開済みの日付と、取得済みの日付 | なし |
-| `komachi catalog --market MARKET` | 日ごとの収録状況と品質 | なし |
+| `komachi markets` | 利用できるマーケット、収録期間、欠測、取引所公開データの案内 | なし |
+| `komachi local` | 取得済みのマーケットと日付 | なし |
 | `komachi download --market MARKET --start DATE [--days N]` | 範囲を指定して取得（中断後は再開） | **あり** |
 | `komachi binance-import --symbol SYMBOL --start DATE --end DATE` | Binance Vision から取り込み | なし |
 | `komachi gmo-import --symbol SYMBOL --start DATE --end DATE` | GMO コインの公開データから取り込み | なし |
