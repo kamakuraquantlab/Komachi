@@ -150,8 +150,8 @@ komachi download --market COINCHECK:BTC_SPOT --start 2025-07-01 --days 28
 残高は消費しません。
 
 ```bash
-komachi binance-import --symbol BTC_USDT --start 2025-07-01 --end 2025-07-28
-komachi gmo-import     --symbol BTC_JPY  --start 2025-07-01 --end 2025-07-28
+komachi import --market BINANCE:BTC_USDT --start 2025-07-01 --end 2025-07-28
+komachi import --market GMO:BTC_JPY     --start 2025-07-01 --end 2025-07-28
 ```
 
 取り込み時に日本時間の日付へ再分割するため、配信データと同じ基準で比較できます。
@@ -217,8 +217,8 @@ Yukinoshita API または無償公開元との通信を伴うコマンドです�
 | `komachi markets` | 利用できるマーケット、収録期間、欠測、取引所公開データの案内 | なし |
 | `komachi local` | 取得済みのマーケットと日付 | なし |
 | `komachi download --market MARKET --start DATE [--days N]` | 範囲を指定して取得（中断後は再開） | **あり** |
-| `komachi binance-import --symbol SYMBOL --start DATE --end DATE` | Binance Vision から取り込み | なし |
-| `komachi gmo-import --symbol SYMBOL --start DATE --end DATE` | GMO コインの公開データから取り込み | なし |
+| `komachi import --market BINANCE:SYMBOL --start DATE --end DATE` | Binance Vision から取り込み | なし |
+| `komachi import --market GMO:SYMBOL --start DATE --end DATE` | GMO コインの公開データから取り込み | なし |
 
 残高を消費するのは `download` のみです。
 取得前に、対象期間・ファイル数・容量・消費数を表示して確認を求めます。

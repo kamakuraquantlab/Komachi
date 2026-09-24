@@ -204,39 +204,92 @@ def cmd_markets(args) -> int:
     print("\nDates are Asia/Tokyo days. 'missing' lists days inside the span with")
     print("no file; dates outside it are not yet collected rather than missing.")
     print("Coverage, schema and quality rules:  https://kamakuraquantlab.jp/data/")
+    print("\n  Use 'komachi download --market MARKET --start DATE' to get the files.")
 
-    # A buyer looking for a venue's trade history should be told where it is,
-    # not left to conclude it is missing.
-    for source in result.get("external_sources", []):
-        print(f"\n{source['exchange']} {source['data_type']}: published by the venue, "
-              f"not sold here -- {source['name']}")
-        print(f"  {source['reason']}")
-        print(f"  Source:   {source['url']}")
-        print(f"  Importer: {source['importer_command']}")
+    # The second half of the answer. A buyer looking for a venue's own trade
+    # history should be told where it is and what fetches it, not left to
+    # conclude it is missing from the table above.
+    external = result.get("external_sources", [])
+    if external:
+        print("\n" + "-" * 78)
+        print("\nNot provided by Kamakura Quant Lab -- published by the venue itself:\n")
+        print(f"{'dataset':26} {'source':16} where")
+        for source in sorted(external, key=lambda s: (s["exchange"], s["data_type"])):
+            print(f"{source['exchange'] + ' ' + source['data_type']:26} "
+                  f"{source['name']:16} {source['url']}")
+        print("\n  Use 'komachi import --market MARKET --start DATE --end DATE' to fetch them.")
+        print("  They land in the same data lake, in the same layout, under the same root,")
+        print("  so one reader spans what you bought and what you imported.")
     return 0
 
 
-def _run_import(args, source: str, importer, note: str) -> int:
-    """Shared shape for the free-source importers.
+# Which venues publish their own trade history, and what fetches each one.
+# Keyed on the exchange because that is what a buyer types; the dataset is
+# always Trade, since neither venue publishes depth.
+IMPORTERS = {
+    "BINANCE": (
+        "Binance Vision",
+        "komachi.binance_vision",
+        "Note: Binance Vision publishes spot trades but not L2 order book depth,\n"
+        "so only the Trade dataset can be produced from this source. The depth for\n"
+        "these markets is sold by Kamakura Quant Lab -- see 'komachi markets'.",
+    ),
+    "GMO": (
+        "GMO coin",
+        "komachi.gmo_archive",
+        "Note: GMO publishes trades but not order book depth, so only the Trade\n"
+        "dataset comes from this source. Order book for the GMO markets is what a\n"
+        "purchased market-day carries -- see 'komachi markets'.",
+    ),
+}
 
-    Both fetch a foreign archive and re-cut it onto JST days, so the only
-    thing that differs is where the bytes come from and what the source
-    publishes.
+
+def cmd_import(args) -> int:
+    """Fetch a venue's own trade history and re-cut it onto JST days.
+
+    The counterpart to `download`: same root, same layout, different origin.
+    `download` brings what was bought from Kamakura Quant Lab; this brings what
+    the venue gives away, and neither knows about the other once the files are
+    on disk.
+
+    Keyed on the market rather than a bare symbol so it reads like every other
+    command, and so asking for a venue that publishes nothing is answered with
+    the list of those that do instead of an empty result.
     """
+    import importlib
+
+    market = args.market.strip().upper()
+    if ":" not in market:
+        raise SystemExit(
+            f"Market must be EXCHANGE:SYMBOL, for example BINANCE:BTC_USDT, not {args.market!r}."
+        )
+    exchange, symbol = market.split(":", 1)
+
+    if exchange not in IMPORTERS:
+        venues = ", ".join(sorted(IMPORTERS))
+        raise SystemExit(
+            f"{exchange} does not publish its own trade history, so there is nothing "
+            f"to import.\nOnly {venues} do. Everything else comes from Kamakura Quant "
+            f"Lab:\n  komachi download --market {market} --start DATE"
+        )
+
+    source, module, note = IMPORTERS[exchange]
+    importer = importlib.import_module(module).import_range
+
     dest = _settings(args).root
     try:
         dates = jst.date_range(args.start, args.end)
     except ValueError as exc:
         raise SystemExit(str(exc))
 
-    print(f"Importing {len(dates)} JST day(s) of {args.symbol} trades from {source}.")
+    print(f"Importing {len(dates)} JST day(s) of {market} trades from {source}.")
     print(f"Downloading directly from {source}; Kamakura Quant Lab is not involved "
           f"in this transfer.")
     print("Source days are re-cut onto Asia/Tokyo days, so each day needs the archive")
     print("before it as well; a day missing either source is not written.\n")
 
     try:
-        results = importer(args.symbol, args.start, args.end, dest, force=args.force)
+        results = importer(symbol, args.start, args.end, dest, force=args.force)
     except Exception as exc:
         print(f"FAILED: {exc}", file=sys.stderr)
         return 1
@@ -259,46 +312,6 @@ def _run_import(args, source: str, importer, note: str) -> int:
         print("Layout matches your Kamakura Quant Lab data, so both load through the same reader.")
     print(f"\n{note}")
     return 0
-
-
-def cmd_binance_import(args) -> int:
-    """Download from Binance Vision and convert into the Kamakura Quant Lab schema."""
-    from komachi import binance_vision
-
-    return _run_import(
-        args, "Binance Vision", binance_vision.import_range,
-        "Note: Binance Vision publishes spot trades but not L2 order book depth,\n"
-        "so only the Trade dataset can be produced from this source.",
-    )
-
-
-def cmd_gmo_import(args) -> int:
-    """Download GMO's published trade history and convert it."""
-    from komachi import gmo_archive
-
-    return _run_import(
-        args, "GMO", gmo_archive.import_range,
-        "Note: GMO publishes trades but not order book depth, so only the Trade\n"
-        "dataset comes from this source. Order book for the delivered GMO markets\n"
-        "is what a purchased market-day carries.",
-    )
-
-
-def _read_local(args, data_type: str):
-    """One local file, addressed the way a buyer thinks about it.
-
-    `stats` and `decode` take a path, which assumes the reader already knows
-    the layout. These take a market and a date, which is what someone has
-    after buying a market-day.
-    """
-    root = _settings(args).root
-    path = data_path(root, args.market, data_type, args.date)
-    if not path.exists():
-        raise SystemExit(
-            f"No {data_type} for {args.market} on {args.date} under {root}.\n"
-            f"Run:  komachi download --market {args.market} --start {args.date} --days 1"
-        )
-    return _load_parquet(path), path
 
 
 def cmd_trades(args) -> int:
@@ -623,24 +636,15 @@ downloading
     ).set_defaults(func=cmd_markets)
 
     p = sub.add_parser(
-        "binance-import",
-        help="Download Binance history from Binance Vision and convert it to the Kamakura Quant Lab schema",
+        "import",
+        help="Fetch a venue's own trade history (BINANCE, GMO) into the same data lake",
     )
-    p.add_argument("--symbol", required=True, help="Kamakura Quant Lab symbol, for example BTC_USDT")
-    p.add_argument("--start", required=True)
-    p.add_argument("--end", required=True)
-    p.add_argument("--force", action="store_true", help="Re-import days already present")
-    p.set_defaults(func=cmd_binance_import)
-
-    p = sub.add_parser(
-        "gmo-import",
-        help="Download GMO's published trade history and convert it to the Kamakura Quant Lab schema",
-    )
-    p.add_argument("--symbol", required=True, help="GMO symbol, for example BTC_JPY")
+    p.add_argument("--market", required=True,
+                   help="EXCHANGE:SYMBOL, for example BINANCE:BTC_USDT or GMO:BTC_JPY")
     p.add_argument("--start", required=True, help="First JST date, inclusive")
     p.add_argument("--end", required=True, help="Last JST date, inclusive")
     p.add_argument("--force", action="store_true", help="Re-import days already present")
-    p.set_defaults(func=cmd_gmo_import)
+    p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("trades", help="Print trades for one market-day")
     p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")
