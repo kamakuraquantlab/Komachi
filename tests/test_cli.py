@@ -189,14 +189,24 @@ def test_download_stops_when_the_allowance_cannot_cover_the_range(monkeypatch, c
 
     cli = _status_cli(monkeypatch, {**BASE, "remaining_market_days": 1,
                                     "timing": {"access_state": "active"}})
-    monkeypatch.setattr(cli, "_plan", lambda client, args, remaining: (
-        [{"file_date": "2026-01-0%d" % n, "data_type": "Trade", "size_bytes": 10}
-         for n in (1, 2, 3)], "2026-01-01", "2026-01-03"))
-    monkeypatch.setattr(cli, "already_have", lambda entry, dest: False)
+    from komachi import downloaders
+
+    monkeypatch.setattr(
+        downloaders.YukinoshitaDownloader, "plan",
+        lambda self, market, dates: [
+            downloaders.Unit("2026-01-0%d" % n, "Trade", 10,
+                             {"file_date": "2026-01-0%d" % n, "data_type": "Trade",
+                              "size_bytes": 10})
+            for n in (1, 2, 3)])
+    monkeypatch.setattr(downloaders.YukinoshitaDownloader, "have",
+                        lambda self, market, unit, dest: False)
 
     class Estimating(cli.KomachiClient):
         def __init__(self, *a, **k):
             pass
+
+        def auth_header(self):
+            return {}
 
         def __enter__(self):
             return self
@@ -220,3 +230,47 @@ def test_download_stops_when_the_allowance_cannot_cover_the_range(monkeypatch, c
     assert code == 1
     assert "Not enough allowance" in out
     assert "3 market-day(s) and 1 remain" in out
+
+
+# ---- the local readers -------------------------------------------------------
+#
+# Nothing exercised `trades` or `book` before, so when a refactor deleted the
+# helper they share, 106 tests passed and the broken build reached PyPI. These
+# are cheap and would have caught it at the import.
+
+
+def test_trades_and_book_resolve_everything_they_call():
+    """Every name these two commands touch exists.
+
+    Not a substitute for running them, but it is what was missing: the fault
+    was a NameError at call time, in a module that imports cleanly.
+    """
+    import komachi.cli as cli
+
+    for name in ("_read_local", "_load_parquet", "cmd_trades", "cmd_book"):
+        assert hasattr(cli, name), f"komachi.cli has no {name}"
+
+
+def test_trades_says_how_to_get_a_day_it_does_not_have(tmp_path, monkeypatch):
+    """The error a buyer actually meets: the file is not there yet.
+
+    It has to name the command that would fetch it, because the reader is
+    someone who asked for a date they have not taken.
+    """
+    import argparse
+
+    import pytest
+
+    import komachi.cli as cli
+
+    monkeypatch.setattr(cli, "_settings",
+                        lambda args: type("S", (), {"root": tmp_path})())
+    args = argparse.Namespace(market="COINCHECK:BTC_SPOT", date="2025-07-01",
+                              rows=5, tail=False)
+
+    with pytest.raises(SystemExit) as raised:
+        cli.cmd_trades(args)
+
+    message = str(raised.value)
+    assert "No Trade for COINCHECK:BTC_SPOT on 2025-07-01" in message
+    assert "komachi download --market COINCHECK:BTC_SPOT" in message

@@ -15,7 +15,8 @@ from pathlib import Path
 import httpx
 
 from komachi.client import ApiError, KomachiClient
-from komachi.download import already_have, download_file
+from komachi import downloaders
+from komachi.downloaders import ImportError_
 from komachi import jst
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
 from komachi.layout import data_path, local_inventory, view_sql
@@ -223,95 +224,97 @@ def cmd_markets(args) -> int:
     return 0
 
 
-# Which venues publish their own trade history, and what fetches each one.
-# Keyed on the exchange because that is what a buyer types; the dataset is
-# always Trade, since neither venue publishes depth.
-IMPORTERS = {
-    "BINANCE": (
-        "Binance Vision",
-        "komachi.binance_vision",
-        "Note: Binance Vision publishes spot trades but not L2 order book depth,\n"
-        "so only the Trade dataset can be produced from this source. The depth for\n"
-        "these markets is sold by Kamakura Quant Lab -- see 'komachi markets'.",
-    ),
-    "GMO": (
-        "GMO coin",
-        "komachi.gmo_archive",
-        "Note: GMO publishes trades but not order book depth, so only the Trade\n"
-        "dataset comes from this source. Order book for the GMO markets is what a\n"
-        "purchased market-day carries -- see 'komachi markets'.",
-    ),
-}
-
-
 def cmd_import(args) -> int:
     """Fetch a venue's own trade history and re-cut it onto JST days.
 
-    The counterpart to `download`: same root, same layout, different origin.
-    `download` brings what was bought from Kamakura Quant Lab; this brings what
-    the venue gives away, and neither knows about the other once the files are
-    on disk.
+    The counterpart to `download`: same options, same loop, same root, same
+    layout, different origin. `download` brings what was bought; this brings
+    what the venue gives away, and neither knows about the other once the
+    files are on disk.
 
     Keyed on the market rather than a bare symbol so it reads like every other
     command, and so asking for a venue that publishes nothing is answered with
     the list of those that do instead of an empty result.
     """
-    import importlib
-
     market = args.market.strip().upper()
     if ":" not in market:
         raise SystemExit(
             f"Market must be EXCHANGE:SYMBOL, for example BINANCE:BTC_USDT, not {args.market!r}."
         )
-    exchange, symbol = market.split(":", 1)
-
-    if exchange not in IMPORTERS:
-        venues = ", ".join(sorted(IMPORTERS))
+    exchange = market.split(":", 1)[0]
+    if exchange not in downloaders.IMPORTERS:
+        venues = ", ".join(sorted(downloaders.IMPORTERS))
         raise SystemExit(
             f"{exchange} does not publish its own trade history, so there is nothing "
             f"to import.\nOnly {venues} do. Everything else comes from Kamakura Quant "
             f"Lab:\n  komachi download --market {market} --start DATE"
         )
 
-    source, module, note = IMPORTERS[exchange]
-    importer = importlib.import_module(module).import_range
-
     dest = _settings(args).root
-    try:
-        dates = jst.date_range(args.start, args.end)
-    except ValueError as exc:
-        raise SystemExit(str(exc))
+    dates = _dates_for(args, fallback=1)
 
-    print(f"Importing {len(dates)} JST day(s) of {market} trades from {source}.")
-    print(f"Downloading directly from {source}; Kamakura Quant Lab is not involved "
-          f"in this transfer.")
-    print("Source days are re-cut onto Asia/Tokyo days, so each day needs the archive")
-    print("before it as well; a day missing either source is not written.\n")
+    with httpx.Client(timeout=120.0, follow_redirects=True) as http:
+        source = downloaders.IMPORTERS[exchange](http)
+        try:
+            units = source.plan(market, dates)
+            pending = [u for u in units if args.force or not source.have(market, u, dest)]
 
-    try:
-        results = importer(symbol, args.start, args.end, dest, force=args.force)
-    except Exception as exc:
-        print(f"FAILED: {exc}", file=sys.stderr)
+            print(f"{len(units)} JST day(s) of {market} trades from {source.source}: "
+                  f"{dates[0]} .. {dates[-1]}")
+            print(f"Downloading directly from {source.source}; Kamakura Quant Lab is "
+                  f"not involved in this transfer, and no allowance is spent.")
+            print("Source days are re-cut onto Asia/Tokyo days, so each day needs the "
+                  "archive before it as well; a day missing either source is not written.")
+            if len(pending) < len(units):
+                print(f"{len(units) - len(pending)} already present, skipped.")
+            if not pending:
+                print("\nNothing to do.")
+                return 0
+            print()
+
+            failed = _fetch_all(source, market, pending, dest, force=args.force)
+        except ImportError_ as exc:
+            print(f"FAILED: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            source.close()
+
+    if failed:
         return 1
-
-    written = [r for r in results if not r.skipped]
-    skipped = [r for r in results if r.skipped]
-    for r in sorted(results, key=lambda r: r.file_date):
-        if r.skipped:
-            print(f"{r.file_date} already present, skipped")
-        else:
-            print(f"{r.file_date} {r.rows:,} trades -> {r.path}")
-
-    incomplete = [d for d in dates if d not in {r.file_date for r in results}]
-    print(f"\n{len(written)} day(s) imported into {dest}"
-          + (f", {len(skipped)} already present" if skipped else ""))
-    if incomplete:
-        print(f"{len(incomplete)} day(s) not written for want of a source archive: "
-              f"{', '.join(incomplete[:5])}{' ...' if len(incomplete) > 5 else ''}")
-    if written:
-        print("Layout matches your Kamakura Quant Lab data, so both load through the same reader.")
-    print(f"\n{note}")
+    print("Layout matches your Kamakura Quant Lab data, so both load through "
+          "the same reader.")
+    print(f"\n{NOTES[exchange]}")
     return 0
+
+
+# What each venue does and does not publish, said once the import is done
+# rather than before it: a buyer reading this has the files and is deciding
+# what to do next, not deciding whether to fetch.
+NOTES = {
+    "BINANCE": "Note: Binance Vision publishes spot trades but not L2 order book depth,\n"
+               "so only the Trade dataset can be produced from this source. The depth for\n"
+               "these markets is sold by Kamakura Quant Lab -- see 'komachi markets'.",
+    "GMO": "Note: GMO publishes trades but not order book depth, so only the Trade\n"
+           "dataset comes from this source. Order book for the GMO markets is what a\n"
+           "purchased market-day carries -- see 'komachi markets'.",
+}
+
+
+def _read_local(args, data_type: str):
+    """One local file, addressed the way a buyer thinks about it.
+
+    `stats` and `decode` take a path, which assumes the reader already knows
+    the layout. These take a market and a date, which is what someone has
+    after buying a market-day.
+    """
+    root = _settings(args).root
+    path = data_path(root, args.market, data_type, args.date)
+    if not path.exists():
+        raise SystemExit(
+            f"No {data_type} for {args.market} on {args.date} under {root}.\n"
+            f"Run:  komachi download --market {args.market} --start {args.date} --days 1"
+        )
+    return _load_parquet(path), path
 
 
 def cmd_trades(args) -> int:
@@ -396,6 +399,68 @@ def _show_plan(market, start, end, catalogued, pending, estimate, remaining) -> 
               f"   (re-downloads inside this window cost nothing)")
 
 
+def _dates_for(args, *, fallback: int) -> list[str]:
+    """The JST days a range covers, from `--days` or `--end`.
+
+    Both commands take the same three options and the same two ways of ending
+    a range, because a buyer should not have to remember which verb wants
+    which. `--days` and `--end` say the same thing twice, so asking for both
+    is refused rather than one silently winning.
+    """
+    if getattr(args, "end", None) and args.days:
+        raise SystemExit("Give --days or --end, not both: they say the same thing.")
+    try:
+        if getattr(args, "end", None):
+            return jst.date_range(args.start, args.end)
+        span = args.days or fallback
+        last = (date.fromisoformat(args.start) + timedelta(days=max(span, 1) - 1)).isoformat()
+        return jst.date_range(args.start, last)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+
+def _fetch_all(downloader, market: str, pending, dest: Path, *, force: bool) -> int:
+    """The loop both commands share: one unit, one line, as it lands.
+
+    Printed per unit rather than collected and shown at the end. A range takes
+    minutes and a buyer watching a silent terminal cannot tell a slow fetch
+    from a hung one -- which is what `import` used to look like for its whole
+    run.
+    """
+    failed, missing, done = [], [], 0
+    for index, unit in enumerate(pending, start=1):
+        label = f"[{index}/{len(pending)}] {unit.label}"
+        try:
+            outcome = downloader.fetch(market, unit, dest, force=force)
+        except Exception as exc:
+            failed.append(unit)
+            print(f"{label} FAILED: {exc}", file=sys.stderr)
+            continue
+        if outcome.unavailable:
+            missing.append(unit)
+            print(f"{label} not available from {downloader.source}")
+            continue
+        done += 1
+        detail = _human_bytes(outcome.bytes_written)
+        if outcome.rows:
+            detail = f"{outcome.rows:,} rows, {detail}"
+        if outcome.verified:
+            detail += " verified"
+        print(f"{label} {detail}")
+
+    print(f"\n{done}/{len(pending)} {downloader.unit_noun}(s) "
+          f"{downloader.past_verb} into {dest}")
+    if missing:
+        shown = ", ".join(u.file_date for u in missing[:5])
+        print(f"{len(missing)} not available from {downloader.source}: {shown}"
+              f"{' ...' if len(missing) > 5 else ''}")
+    if failed:
+        print(f"{len(failed)} failed. Re-run the same command to continue; what "
+              f"succeeded is kept.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_download(args) -> int:
     """Download from a start date, continuing wherever a previous run stopped.
 
@@ -425,54 +490,45 @@ def cmd_download(args) -> int:
         _refuse_if_closed(state)
         remaining = state["remaining_market_days"]
 
-        # stats reads the catalogue: it issues no URL and spends nothing.
-        catalogued, start, end = _plan(client, args, remaining)
-        if not catalogued:
-            print(f"Nothing catalogued for {args.market} from {args.start}.")
-            return 0
-
-        pending = [e for e in catalogued if args.force or not already_have(e, dest)]
-        if not pending:
-            print(f"All {len(catalogued)} file(s) for {start}..{end} are present. Nothing to do.")
-            return 0
-
-        estimate = client.estimate(args.market, start, end)
-        _show_plan(args.market, start, end, catalogued, pending, estimate, remaining)
-
-        # The service refuses per file anyway, so this changes nothing about
-        # what is permitted. It changes what the buyer is asked: without it
-        # they confirm a plan and then watch it fail once per file, which is
-        # the same shape of fault as being told a lapsed token is fine.
-        if not estimate.get("sufficient", True):
-            return 1
-        if not args.yes and input("\nContinue? [y/N] ").strip().lower() not in ("y", "yes"):
-            print("Cancelled.")
-            return 0
-        print()
-
-        failures = []
         # httpx drops Authorization when a redirect crosses origins, so the
         # bearer token reaches the API and never object storage.
         with httpx.Client(timeout=120.0, follow_redirects=True,
                           headers=client.auth_header()) as http:
-            for index, item in enumerate(pending, start=1):
-                label = f"[{index}/{len(pending)}] {item['file_date']} {item['data_type']}"
-                try:
-                    entry = dict(item, url=client.download_link(
-                        args.market, item["file_date"], item["data_type"]))
-                    outcome = download_file(entry, dest, client=http, force=args.force)
-                except Exception as exc:
-                    failures.append(item)
-                    print(f"{label} FAILED: {exc}", file=sys.stderr)
-                    continue
-                verified = " verified" if outcome.verified else ""
-                print(f"{label} {_human_bytes(outcome.bytes_written)}{verified}")
+            source = downloaders.YukinoshitaDownloader(client, http)
+            dates = _dates_for(args, fallback=remaining)
+            # stats reads the catalogue: it issues no URL and spends nothing.
+            catalogued = source.plan(args.market, dates)
+            if not catalogued:
+                print(f"Nothing catalogued for {args.market} from {args.start}.")
+                return 0
 
-    done = len(pending) - len(failures)
-    print(f"\n{done}/{len(pending)} file(s) downloaded into {dest}")
-    if failures:
-        print(f"{len(failures)} failed. Re-run the same command to continue; what "
-              f"succeeded is kept and will not be paid for again.", file=sys.stderr)
+            start, end = catalogued[0].file_date, catalogued[-1].file_date
+            pending = [u for u in catalogued
+                       if args.force or not source.have(args.market, u, dest)]
+            if not pending:
+                print(f"All {len(catalogued)} file(s) for {start}..{end} are present. "
+                      f"Nothing to do.")
+                return 0
+
+            estimate = client.estimate(args.market, start, end)
+            _show_plan(args.market, start, end,
+                       [u.meta for u in catalogued], [u.meta for u in pending],
+                       estimate, remaining)
+
+            # The service refuses per file anyway, so this changes nothing
+            # about what is permitted. It changes what the buyer is asked:
+            # without it they confirm a plan and then watch it fail once per
+            # file, which is the same shape of fault as being told a lapsed
+            # token is fine.
+            if not estimate.get("sufficient", True):
+                return 1
+            if not args.yes and input("\nContinue? [y/N] ").strip().lower() not in ("y", "yes"):
+                print("Cancelled.")
+                return 0
+            print()
+
+            failed = _fetch_all(source, args.market, pending, dest, force=args.force)
+    if failed:
         return 1
     print("Query it with:  komachi duckdb")
     return 0
@@ -568,22 +624,6 @@ def cmd_decode(args) -> int:
     return 0
 
 
-def _plan(client, args, remaining: int) -> tuple[list[dict], str, str]:
-    """What the run covers, and over which dates.
-
-    Without `--days` it spans as many days as the remaining allowance could pay
-    for. The range is then reported as the dates the catalogue actually holds,
-    so the summary does not overstate a span that runs across a gap.
-    """
-    span = args.days or remaining
-    last = (date.fromisoformat(args.start) + timedelta(days=max(span, 1) - 1)).isoformat()
-    catalogued = client.stats(args.market, start=args.start, end=last)
-    if not catalogued:
-        return [], args.start, last
-    dates = sorted({e["file_date"] for e in catalogued})
-    return catalogued, dates[0], dates[-1]
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="komachi",
@@ -642,7 +682,8 @@ downloading
     p.add_argument("--market", required=True,
                    help="EXCHANGE:SYMBOL, for example BINANCE:BTC_USDT or GMO:BTC_JPY")
     p.add_argument("--start", required=True, help="First JST date, inclusive")
-    p.add_argument("--end", required=True, help="Last JST date, inclusive")
+    p.add_argument("--days", type=int, help="How many days from --start. Default 1")
+    p.add_argument("--end", help="Last JST date, inclusive. Use instead of --days")
     p.add_argument("--force", action="store_true", help="Re-import days already present")
     p.set_defaults(func=cmd_import)
 
@@ -665,6 +706,7 @@ downloading
     p.add_argument("--start", required=True, help="First JST date, YYYY-MM-DD")
     p.add_argument("--days", type=int,
                    help="Days from --start. Defaults to what the remaining allowance covers")
+    p.add_argument("--end", help="Last JST date, inclusive. Use instead of --days")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
     p.add_argument("--force", action="store_true", help="Re-download files already present")
     p.set_defaults(func=cmd_download)

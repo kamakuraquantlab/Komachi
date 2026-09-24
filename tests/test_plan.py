@@ -35,44 +35,77 @@ class Args:
         self.market = "COINCHECK:BTC_SPOT"
         self.start = "2025-07-01"
         self.days = None
+        self.end = None
         self.__dict__.update(kw)
 
 
 WEEK = [f"2025-07-{d:02d}" for d in range(1, 8)]
 
 
+def _dates(args, fallback):
+    return cli._dates_for(args, fallback=fallback)
+
+
 def test_without_days_it_plans_the_whole_remaining_allowance():
     """The buyer should not have to work out how much they can still afford."""
-    client = FakeClient(dates=[f"2025-07-{d:02d}" for d in range(1, 30)], remaining=21)
+    dates = _dates(Args(), fallback=21)
 
-    files, start, end = cli._plan(client, Args(), remaining=21)
-
-    assert start == "2025-07-01"
-    assert end == "2025-07-21"          # 21 days, matching the allowance
-    assert len({f["file_date"] for f in files}) == 21
+    assert dates[0] == "2025-07-01"
+    assert dates[-1] == "2025-07-21"        # 21 days, matching the allowance
+    assert len(dates) == 21
 
 
 def test_days_caps_the_span():
-    client = FakeClient(dates=[f"2025-07-{d:02d}" for d in range(1, 30)])
-    files, start, end = cli._plan(client, Args(days=3), remaining=21)
+    dates = _dates(Args(days=3), fallback=21)
+    assert (dates[0], dates[-1]) == ("2025-07-01", "2025-07-03")
+    assert len(dates) == 3
 
-    assert (start, end) == ("2025-07-01", "2025-07-03")
-    assert len({f["file_date"] for f in files}) == 3
+
+def test_end_is_the_other_way_to_say_it():
+    """`import` was --start/--end and `download` was --start/--days. Both take
+    both now, because a buyer should not have to remember which verb wants
+    which."""
+    dates = _dates(Args(end="2025-07-05"), fallback=21)
+    assert (dates[0], dates[-1]) == ("2025-07-01", "2025-07-05")
+
+
+def test_days_and_end_together_are_refused():
+    """They say the same thing, so one would have to silently win."""
+    import pytest
+
+    with pytest.raises(SystemExit, match="not both"):
+        _dates(Args(days=3, end="2025-07-05"), fallback=21)
+
+
+def test_the_catalogue_decides_what_those_dates_actually_hold():
+    """A range is dates; a plan is files. The gap between them is the gaps."""
+    from komachi import downloaders
+
+    client = FakeClient(dates=[f"2025-07-{d:02d}" for d in range(1, 30)])
+    units = downloaders.YukinoshitaDownloader(client, None).plan(
+        "COINCHECK:BTC_SPOT", _dates(Args(days=3), fallback=21))
+
+    assert len({u.file_date for u in units}) == 3
 
 
 def test_the_range_is_clamped_to_what_the_catalogue_holds():
     """Asking for 21 days when 7 are published should report the 7."""
-    client = FakeClient(dates=WEEK, remaining=21)
-    files, start, end = cli._plan(client, Args(), remaining=21)
+    from komachi import downloaders
 
-    assert (start, end) == ("2025-07-01", "2025-07-07")
-    assert len({f["file_date"] for f in files}) == 7
+    client = FakeClient(dates=WEEK, remaining=21)
+    units = downloaders.YukinoshitaDownloader(client, None).plan(
+        "COINCHECK:BTC_SPOT", _dates(Args(), fallback=21))
+
+    assert (units[0].file_date, units[-1].file_date) == ("2025-07-01", "2025-07-07")
+    assert len({u.file_date for u in units}) == 7
 
 
 def test_an_empty_catalogue_plans_nothing():
+    from komachi import downloaders
+
     client = FakeClient(dates=[])
-    files, _, _ = cli._plan(client, Args(), remaining=21)
-    assert files == []
+    assert downloaders.YukinoshitaDownloader(client, None).plan(
+        "COINCHECK:BTC_SPOT", _dates(Args(), fallback=21)) == []
 
 
 def test_the_plan_shows_range_size_and_cost(capsys):
