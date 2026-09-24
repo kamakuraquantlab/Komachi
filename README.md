@@ -284,6 +284,25 @@ Komachi は取り込み時に日本時間の日付へ再分割するため、
 2. データの加工・導出。silver 以降は [Hase](https://github.com/kamakuraquantlab) が担当します。
 3. Kamakura Quant Lab の API 以外に対する資格情報の保持。
 
-## 6 ライセンス
+## 6 AI エージェントに任せる
+
+セットアップやコマンドの使い方は、Claude Code や Codex などの
+AI コーディングエージェントに任せられます。
+このリポジトリの [`AGENTS.md`](AGENTS.md) がエージェント向けの手引きです。
+
+```bash
+git clone https://github.com/kamakuraquantlab/Komachi
+cd Komachi
+claude          # または codex など
+```
+
+あとは「セットアップして」「COINCHECK の 1 週間分を取得したい」のように依頼してください。
+手引きには、利用枠を消費するコマンドはどれか、トークンをどう扱うか、
+エラーが出たときに何を確認するかを記載しています。
+
+利用枠を消費するのは `download` のみです。実行前に対象と消費数を表示して確認を求めます。
+エージェントにも、確認なしに実行しないよう指示しています。
+
+## 7 ライセンス
 
 Apache License 2.0。[LICENSE.md](LICENSE.md)
