@@ -430,15 +430,23 @@ def _fetch_all(downloader, market: str, pending, dest: Path, *, force: bool) -> 
     failed, missing, done = [], [], 0
     for index, unit in enumerate(pending, start=1):
         label = f"[{index}/{len(pending)}] {unit.label}"
+        # The line opens before the fetch and is completed after it, rather
+        # than appearing whole on completion. A Binance day is a few hundred
+        # megabytes of source archive, so waiting until it lands leaves
+        # minutes of silence per unit with no way to tell a slow fetch from a
+        # hung one. Completing the line rather than redrawing it means a
+        # redirected log reads the same as a terminal, with no stray carriage
+        # returns in it.
+        print(f"{label} ", end="", flush=True)
         try:
             outcome = downloader.fetch(market, unit, dest, force=force)
         except Exception as exc:
             failed.append(unit)
-            print(f"{label} FAILED: {exc}", file=sys.stderr)
+            print(f"FAILED: {exc}")
             continue
         if outcome.unavailable:
             missing.append(unit)
-            print(f"{label} not available from {downloader.source}")
+            print(f"not available from {downloader.source}")
             continue
         done += 1
         detail = _human_bytes(outcome.bytes_written)
@@ -446,7 +454,7 @@ def _fetch_all(downloader, market: str, pending, dest: Path, *, force: bool) -> 
             detail = f"{outcome.rows:,} rows, {detail}"
         if outcome.verified:
             detail += " verified"
-        print(f"{label} {detail}")
+        print(detail)
 
     print(f"\n{done}/{len(pending)} {downloader.unit_noun}(s) "
           f"{downloader.past_verb} into {dest}")
@@ -734,6 +742,16 @@ downloading
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Progress is only progress if it arrives while the work is happening.
+    # Python block-buffers stdout whenever it is not a terminal, so piping to
+    # a pager, redirecting to a log, or running under anything that captures
+    # output held every line until the process exited -- which is exactly how
+    # a long import looked like it printed nothing at all.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):   # a stream that cannot be reconfigured
+        pass
+
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
