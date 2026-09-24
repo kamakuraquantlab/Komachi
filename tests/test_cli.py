@@ -66,10 +66,16 @@ BASE = {
 
 
 def test_status_prints_the_policy_sentence_it_was_given(monkeypatch, capsys):
-    """Verbatim. A rephrasing shipped to a buyer cannot be corrected later."""
-    sentence = "Active until 2026-09-25. Nothing to renew."
+    """Verbatim, and only when something is wrong.
+
+    On an active token the figures above it say everything; on a closed one
+    this is the only place the reason appears, so it is printed exactly as the
+    service worded it. A rephrasing shipped to a buyer cannot be corrected
+    later.
+    """
+    sentence = "The download period ended on 2026-09-25."
     cli = _status_cli(monkeypatch, {**BASE, "timing": {
-        "access_state": "active",
+        "access_state": "lapsed",
         "activated_at": "2026-09-11T10:00:00+00:00",
         "active_until": "2026-09-25T10:00:00+00:00",
         "redeem_by": "2026-12-10T10:00:00+00:00",
@@ -274,3 +280,17 @@ def test_trades_says_how_to_get_a_day_it_does_not_have(tmp_path, monkeypatch):
     message = str(raised.value)
     assert "No Trade for COINCHECK:BTC_SPOT on 2025-07-01" in message
     assert "komachi download --market COINCHECK:BTC_SPOT" in message
+
+
+def test_status_is_quiet_about_policy_while_everything_is_fine(monkeypatch, capsys):
+    """The sentence is an explanation, and an active token has nothing to explain."""
+    cli = _status_cli(monkeypatch, {**BASE, "timing": {
+        "access_state": "active",
+        "activated_at": "2026-09-11T10:00:00+00:00",
+        "active_until": "2026-09-25T10:00:00+00:00",
+        "policy": "Active until 2026-09-25. Nothing to renew.",
+    }})
+
+    cli.cmd_token_status(argparse.Namespace())
+
+    assert "Nothing to renew" not in capsys.readouterr().out

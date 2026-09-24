@@ -189,9 +189,10 @@ time (JST)            best bid        best ask      spread
 
 ### 1.8 分析へ
 
+`download` と `import` はビューを自動で更新します。取得後そのまま読めます。
+
 ```bash
-komachi duckdb
-duckdb ~/kamakuraquantlab-data/kamakuraquantlab.duckdb
+duckdb ~/kamakuraquantlab-data/kql.duckdb
 ```
 
 ```sql
@@ -234,7 +235,7 @@ market-day は 1 マーケットの 1 日分で、同じ日の板と約定を合
 | `komachi book --market MARKET --date DATE` | 最良気配とスプレッドの表示 |
 | `komachi stats --path PATH` | 行数と時間範囲 |
 | `komachi decode --path PATH` | スキーマと先頭数行 |
-| `komachi duckdb` | DuckDB のビューを作成・更新 |
+| `komachi duckdb` | DuckDB のビューを手動で再作成（通常は自動） |
 | `komachi sql` | ビュー定義の SQL を出力 |
 
 ## 3 保存先の構成

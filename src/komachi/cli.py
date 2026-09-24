@@ -152,15 +152,16 @@ def cmd_token_status(args) -> int:
     for i, option in enumerate(shapes(remaining, markets=max(len(state["markets"]), 1))):
         print(f"{'Spend it as' if i == 0 else '':<15}{option}")
 
-    print(f"\nMarkets        {', '.join(state['markets']) or 'none catalogued'}")
-    print("\nA market-day is one market on one date, covering every dataset published for it.")
-    print("The allowance is not tied to a market: spend it wherever you like.")
-    # The service's own wording, printed as it arrives. This tool does not
-    # rephrase policy, because a rephrasing installed on a buyer's machine
-    # cannot be corrected when the policy changes.
+    # Only when something is wrong, and then verbatim. On an active token the
+    # lines above say everything and the sentence was noise; on a lapsed,
+    # expired, exhausted or withdrawn one it is the only place the reason
+    # appears, and it is the service's own wording. This tool does not
+    # rephrase policy -- a rephrasing installed on a buyer's machine cannot be
+    # corrected when the policy changes.
     policy = timing.get("policy")
-    if policy:
+    if policy and timing.get("access_state") not in ("active", "redeemable"):
         print(f"\n{policy}")
+    print()
     return 0
 
 
@@ -218,7 +219,7 @@ def cmd_markets(args) -> int:
         for source in sorted(external, key=lambda s: (s["exchange"], s["data_type"])):
             print(f"{source['exchange'] + ' ' + source['data_type']:26} "
                   f"{source['name']:16} {source['url']}")
-        print("\n  Use 'komachi import --market MARKET --start DATE --end DATE' to fetch them.")
+        print("\n  Use 'komachi import --market MARKET --start DATE --days DAYS' to fetch them.")
         print("  They land in the same data lake, in the same layout, under the same root,")
         print("  so one reader spans what you bought and what you imported.")
     return 0
@@ -419,6 +420,31 @@ def _dates_for(args, *, fallback: int) -> list[str]:
         raise SystemExit(str(exc))
 
 
+def _refresh_views(dest: Path) -> None:
+    """Rebuild the DuckDB views over whatever is now on disk.
+
+    Run by the commands that change the tree, rather than left as a step to
+    remember. Telling a buyer to run it themselves made querying a thing you
+    had to be told about twice: once to learn it existed, and again every time
+    new files arrived and the views did not know about them.
+
+    Quiet on success and quiet when DuckDB is absent. It is an optional extra,
+    a buyer who did not install it asked not to have it, and a download that
+    worked should not end in a warning about a tool they declined.
+    """
+    try:
+        counts = build_database(dest, dest / "kql.duckdb")
+    except DuckDBUnavailable:
+        return
+    except Exception as exc:                       # a corrupt tree, a locked file
+        print(f"Views not refreshed: {exc}", file=sys.stderr)
+        return
+    if counts:
+        total = sum(counts.values())
+        print(f"DuckDB views refreshed: {total:,} rows across "
+              f"{', '.join(sorted(counts))}.")
+
+
 def _fetch_all(downloader, market: str, pending, dest: Path, *, force: bool) -> int:
     """The loop both commands share: one unit, one line, as it lands.
 
@@ -458,6 +484,8 @@ def _fetch_all(downloader, market: str, pending, dest: Path, *, force: bool) -> 
 
     print(f"\n{done}/{len(pending)} {downloader.unit_noun}(s) "
           f"{downloader.past_verb} into {dest}")
+    if done:
+        _refresh_views(dest)
     if missing:
         shown = ", ".join(u.file_date for u in missing[:5])
         print(f"{len(missing)} not available from {downloader.source}: {shown}"
@@ -538,7 +566,6 @@ def cmd_download(args) -> int:
             failed = _fetch_all(source, args.market, pending, dest, force=args.force)
     if failed:
         return 1
-    print("Query it with:  komachi duckdb")
     return 0
 
 
@@ -655,7 +682,8 @@ layout
   <root>/bronze/dataset=Trade/exchange=GMO/symbol=BTC_JPY/date=2026-01-15/data.parquet
 
   Dates are Asia/Tokyo days; timestamps inside the files are UTC epochs.
-  Run 'komachi duckdb' after downloading to query it.
+  download and import refresh the DuckDB views themselves, so what
+  arrives is queryable without a further step.
 
 downloading
   komachi download --market MARKET --start YYYY-MM-DD [--days N]
@@ -664,9 +692,14 @@ downloading
   remaining allowance covers. It shows the range, size and cost before
   fetching anything, and re-running continues an interrupted run for free.
 """)
-    parser.add_argument("--token", help="Purchase token; overrides the environment and the settings file")
-    parser.add_argument("--api-url", help="Kamakura Quant Lab API base URL")
-    parser.add_argument("--root", help=f"Data root; overrides {ENV_FILE}. Default {DEFAULT_ROOT}")
+    # Hidden, not removed. All three still work and are what makes a second
+    # root, a test service or a one-off token possible; none of them is part
+    # of the path a buyer takes, and listing them at the top of every --help
+    # made three developer switches the first thing anyone read. The settings
+    # file is where a buyer changes any of this.
+    parser.add_argument("--token", help=argparse.SUPPRESS)
+    parser.add_argument("--api-url", help=argparse.SUPPRESS)
+    parser.add_argument("--root", help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
 
     # The token is the thing a buyer holds, so it is the noun the commands
@@ -722,7 +755,10 @@ downloading
     p = sub.add_parser("local", help="Show what is already downloaded")
     p.set_defaults(func=cmd_local)
 
-    p = sub.add_parser("duckdb", help="Create or refresh a DuckDB database over the downloaded tree")
+    # `download` and `import` refresh the views themselves, so this is for
+    # rebuilding after something else touched the tree -- a hand-copied file,
+    # a deletion, a database moved elsewhere with --db.
+    p = sub.add_parser("duckdb", help="Rebuild the DuckDB views by hand. Normally automatic")
     p.add_argument("--db", help="Database file. Defaults to <root>/kql.duckdb")
     p.set_defaults(func=cmd_duckdb)
 

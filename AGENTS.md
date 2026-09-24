@@ -132,6 +132,12 @@ the allowance, what is left, and both deadlines.
 | `komachi duckdb` / `komachi sql` | no |
 | `komachi trades` / `book` / `stats` / `decode` | no |
 
+`download` and `import` rebuild the DuckDB views themselves when they write
+anything, so what arrives is queryable straight away. `komachi duckdb` is for
+rebuilding by hand after something else touched the tree — a deleted file, a
+database moved with `--db`. Do not tell them to run it after a download; it
+already ran.
+
 `markets` is the right first command for almost any question about what is
 available: it lists every market with its datasets, its date span, and the
 days missing inside that span.
