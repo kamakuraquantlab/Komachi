@@ -158,7 +158,7 @@ def test_an_unset_root_is_refused_rather_than_guessed(tmp_path, monkeypatch):
 
 
 def test_an_explicit_root_settles_it_without_asking(tmp_path, monkeypatch):
-    """Anything unattended must not meet a prompt, which is why Akimoto passes
+    """Anything unattended must not meet a prompt, which is why a non-interactive run passes
     the root by environment and never reaches setup."""
     monkeypatch.setenv(settings.ROOT_KEY, str(tmp_path / "elsewhere"))
     monkeypatch.setattr(settings, "ENV_FILE", tmp_path / "absent.env")

@@ -176,7 +176,7 @@ def test_server_error_is_retried(tmp_path):
 
 
 def test_a_prefixed_checksum_from_the_catalogue_verifies(tmp_path):
-    """Kitakamakura records "sha256:<hex>"; a bare comparison rejects every file."""
+    """The catalogue records "sha256:<hex>"; a bare comparison rejects every file."""
     payload = b"parquet-bytes"
     digest = hashlib.sha256(payload).hexdigest()
     client = _client(lambda request: httpx.Response(200, content=payload))
