@@ -72,8 +72,8 @@ Remaining      28 market-days  (4 market-weeks)
 
 Markets        BITBANK:BTC_SPOT, BITBANK:ETH_SPOT, ... COINCHECK:XRP_SPOT
 
-Active until 2026-09-25. Until then you can unlock market-days and re-download
-anything already unlocked as often as you like, at no further cost.
+Active until 2026-09-25. Until then you can take market-days and re-download
+anything already taken as often as you like, at no further cost.
 ```
 
 期間は 2 つあり、順番に効きます。
@@ -81,7 +81,7 @@ anything already unlocked as often as you like, at no further cost.
 | | 期間 | 起点 | 過ぎると |
 |---|---|---|---|
 | ログイン期間 | 1 か月 | ご購入時 | サインインできず、以後は使えません |
-| ダウンロード期間 | 14 日 | **最初にサインインした時** | 新たなアンロックも配信も行われません |
+| ダウンロード期間 | 14 日 | **最初にサインインした時** | 新たな取得も配信も行われません |
 
 **ログイン期間**の間に、一度 tsurugaoka にサインインしてください。
 この最初のサインインでトークンが発行され、同時にダウンロード期間が始まります。
@@ -90,14 +90,14 @@ anything already unlocked as often as you like, at no further cost.
 受け取ってすぐに作業を始められなくても不利にならないよう、
 ご購入時ではなく初回サインイン時を起点にしています。
 
-ダウンロード期間の中では、アンロックした market-day を何度でも取得できます。
+ダウンロード期間の中では、取得した market-day を何度でも再取得できます。
 ファイルを削除しても、ダウンロードに失敗しても、取り直しに利用枠は消費しません。
 回数の上限はありません。
 ダウンロードのたびに新しい URL を発行し、その URL は 1 時間で失効します。
-`komachi download` は未アンロックの日付をその場でアンロックしてから取得するため、
-アンロックのための操作は必要ありません。
+`komachi download` は、まだ取得していない日付をその場で取得します。
+そのための事前操作は必要ありません。
 
-ダウンロード期間を過ぎると、新しい market-day のアンロックも、ダウンロード用 URL の発行も停止します。
+ダウンロード期間を過ぎると、新しい market-day の取得も、ダウンロード用 URL の発行も停止します。
 利用枠に未使用分があっても使えません。
 `komachi download` は取得を始める前に、その旨を表示して終了します。
 tsurugaoka にはサインインでき、利用状況と終了日を確認できます。
