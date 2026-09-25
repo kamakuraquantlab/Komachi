@@ -318,7 +318,9 @@ def test_status_lists_what_the_allowance_was_spent_on(monkeypatch, capsys):
     out = capsys.readouterr().out
 
     assert "Taken          3 market-day(s), 2 market(s)" in out
-    assert "COINCHECK:BTC_SPOT        2  2025-07-01 .. 2025-07-03" in out
+    # Two days a gap apart are two periods, not a three-day span.
+    assert "COINCHECK:BTC_SPOT        2  2025-07-01" in out
+    assert "2025-07-03" in out
     assert "GMO:BTC_JPY               1  2025-07-02" in out
 
 
@@ -329,3 +331,49 @@ def test_status_says_nothing_about_taken_days_when_there_are_none(monkeypatch, c
     cli.cmd_token_status(argparse.Namespace())
 
     assert "Taken" not in capsys.readouterr().out
+
+
+def test_status_shows_each_period_when_the_days_are_not_continuous(monkeypatch, capsys):
+    """Three days in January and a month in June is 34 days, not six months.
+
+    Reporting only the outer bounds says the second thing, and it is the
+    number a buyer would use to decide whether a range still needs fetching.
+    """
+    taken = ([{"market": "GMO:BTC_SPOT", "file_date": f"2026-01-0{d}"} for d in (1, 2, 3)]
+             + [{"market": "GMO:BTC_SPOT", "file_date": f"2026-06-{d:02d}"} for d in range(1, 31)])
+    cli = _status_cli(monkeypatch, {**BASE, "_taken": taken})
+
+    cli.cmd_token_status(argparse.Namespace())
+    out = capsys.readouterr().out
+
+    assert "GMO:BTC_SPOT             33  2026-01-01 .. 2026-01-03" in out
+    assert "2026-06-01 .. 2026-06-30" in out
+    assert "2026-01-01 .. 2026-06-30" not in out, "the outer bounds are not a period"
+
+
+def test_a_single_taken_day_is_one_date_not_a_span():
+    import cli
+
+    assert cli._runs(["2026-01-05"]) == [("2026-01-05", "2026-01-05")]
+    assert cli._span_text("2026-01-05", "2026-01-05") == "2026-01-05"
+
+
+def test_runs_collapse_only_what_is_actually_consecutive():
+    import cli
+
+    assert cli._runs(["2026-01-01", "2026-01-02", "2026-01-04"]) == [
+        ("2026-01-01", "2026-01-02"), ("2026-01-04", "2026-01-04")]
+    # Unsorted input, and a duplicate, are both what the API can hand back.
+    assert cli._runs(["2026-01-02", "2026-01-01", "2026-01-02"]) == [
+        ("2026-01-01", "2026-01-02")]
+
+
+def test_many_periods_are_summarised_rather_than_listed_forever(monkeypatch, capsys):
+    """Past a handful the list is longer than the figure it explains."""
+    taken = [{"market": "GMO:BTC_SPOT", "file_date": f"2026-0{m}-01"} for m in range(1, 8)]
+    cli = _status_cli(monkeypatch, {**BASE, "_taken": taken})
+
+    cli.cmd_token_status(argparse.Namespace())
+    out = capsys.readouterr().out
+
+    assert "+3 more period(s)" in out

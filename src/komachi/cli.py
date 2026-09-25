@@ -125,6 +125,40 @@ def _in_weeks(market_days: int) -> str:
     return "" if text.endswith("market-days") or text == "none" else f"  ({text})"
 
 
+# How many separate stretches to name before summarising. Enough to show a
+# couple of interrupted downloads; past that the list is longer than the
+# figure it explains.
+SPANS_SHOWN = 4
+
+
+def _runs(dates: list[str]) -> list[tuple[str, str]]:
+    """Consecutive dates collapsed into (first, last) spans.
+
+    A buyer who took three days in January and a month in June owns 34 days,
+    not six months of them. Reporting only the outer bounds says the second
+    thing, and the difference matters: it is the number they would use to
+    decide whether a range still needs downloading.
+    """
+    import datetime as dt
+
+    if not dates:
+        return []
+    days = sorted({dt.date.fromisoformat(d) for d in dates})
+    spans, first, last = [], days[0], days[0]
+    for day in days[1:]:
+        if (day - last).days == 1:
+            last = day
+            continue
+        spans.append((first.isoformat(), last.isoformat()))
+        first = last = day
+    spans.append((first.isoformat(), last.isoformat()))
+    return spans
+
+
+def _span_text(first: str, last: str) -> str:
+    return first if first == last else f"{first} .. {last}"
+
+
 def cmd_token_status(args) -> int:
     """Granted, used, balance, and both of the token's clocks.
 
@@ -170,9 +204,18 @@ def cmd_token_status(args) -> int:
         print(f"\nTaken          {len(taken)} market-day(s), "
               f"{len(by_market)} market(s). Re-fetching these costs nothing.")
         for market in sorted(by_market):
-            days = sorted(by_market[market])
-            span = days[0] if len(days) == 1 else f"{days[0]} .. {days[-1]}"
-            print(f"{'':<15}{market:22} {len(days):>4}  {span}")
+            days = by_market[market]
+            spans = _runs(days)
+            # The count once, then every stretch it covers. Continuation lines
+            # sit under the span column so the shape of what is held is
+            # readable down the page rather than needing to be worked out.
+            shown = spans[:SPANS_SHOWN]
+            print(f"{'':<15}{market:22} {len(days):>4}  {_span_text(*shown[0])}")
+            for first, last in shown[1:]:
+                print(f"{'':<15}{'':22} {'':>4}  {_span_text(first, last)}")
+            if len(spans) > SPANS_SHOWN:
+                more = len(spans) - SPANS_SHOWN
+                print(f"{'':<15}{'':22} {'':>4}  +{more} more period(s)")
 
     # Only when something is wrong, and then verbatim. On an active token the
     # lines above say everything and the sentence was noise; on a lapsed,
