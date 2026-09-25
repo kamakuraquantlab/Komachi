@@ -49,6 +49,11 @@ def _status_cli(monkeypatch, state):
         def status(self):
             return state
 
+        def usage(self):
+            # `token status` asks what the allowance was spent on. Empty here
+            # unless a test says otherwise; the ones that care pass `taken`.
+            return {"market_days": state.get("_taken", [])}
+
     monkeypatch.setattr(cli, "KomachiClient", FakeClient)
     monkeypatch.setattr(cli, "_client", lambda args: FakeClient())
     return cli
@@ -294,3 +299,33 @@ def test_status_is_quiet_about_policy_while_everything_is_fine(monkeypatch, caps
     cli.cmd_token_status(argparse.Namespace())
 
     assert "Nothing to renew" not in capsys.readouterr().out
+
+
+def test_status_lists_what_the_allowance_was_spent_on(monkeypatch, capsys):
+    """Asked of the service, not read from disk.
+
+    `local` answers "what do I have"; this answers "what have I taken". They
+    differ for a buyer who deleted a file, and for one on a second machine
+    that has never seen the days their token already owns.
+    """
+    cli = _status_cli(monkeypatch, {**BASE, "_taken": [
+        {"market": "COINCHECK:BTC_SPOT", "file_date": "2025-07-01"},
+        {"market": "COINCHECK:BTC_SPOT", "file_date": "2025-07-03"},
+        {"market": "GMO:BTC_JPY", "file_date": "2025-07-02"},
+    ]})
+
+    cli.cmd_token_status(argparse.Namespace())
+    out = capsys.readouterr().out
+
+    assert "Taken          3 market-day(s), 2 market(s)" in out
+    assert "COINCHECK:BTC_SPOT        2  2025-07-01 .. 2025-07-03" in out
+    assert "GMO:BTC_JPY               1  2025-07-02" in out
+
+
+def test_status_says_nothing_about_taken_days_when_there_are_none(monkeypatch, capsys):
+    """A fresh token has spent nothing, and a heading over an empty list is noise."""
+    cli = _status_cli(monkeypatch, BASE)
+
+    cli.cmd_token_status(argparse.Namespace())
+
+    assert "Taken" not in capsys.readouterr().out

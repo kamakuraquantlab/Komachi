@@ -55,6 +55,11 @@ class KomachiClient:
         """Deliverable markets plus the external sources Kamakura Quant Lab refers to."""
         return self._request("GET", "/api/datasets/markets")
 
+    def usage(self) -> dict:
+        """The market-days this token has taken, and the clocks, as the
+        service sees them. Nothing here is read from disk."""
+        return self._request("GET", "/api/token/usage")
+
     def coverage(self) -> list[dict]:
         """Per-market span, datasets and gaps, for every market in the catalogue.
 

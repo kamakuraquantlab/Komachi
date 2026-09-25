@@ -134,6 +134,12 @@ def cmd_token_status(args) -> int:
     """
     with _client(args) as client:
         state = client.status()
+        # Both in one session: the second call is what the allowance was spent
+        # on, and a buyer asking about their allowance is asking about both.
+        try:
+            taken = client.usage().get("market_days", [])
+        except ApiError:
+            taken = []
     granted, remaining = state["granted_market_days"], state["remaining_market_days"]
     timing = _timing(state)
     print(f"Product        {state['product_id']}")
@@ -151,6 +157,22 @@ def cmd_token_status(args) -> int:
 
     for i, option in enumerate(shapes(remaining, markets=max(len(state["markets"]), 1))):
         print(f"{'Spend it as' if i == 0 else '':<15}{option}")
+
+    # What the allowance was spent on, asked of the service rather than read
+    # from disk. `local` answers "what do I have"; this answers "what have I
+    # taken", and they are different questions with different answers -- a
+    # buyer who deleted a file still owns the day, and a buyer on a second
+    # machine owns days that machine has never seen.
+    if taken:
+        by_market: dict[str, list[str]] = {}
+        for row in taken:
+            by_market.setdefault(row["market"], []).append(row["file_date"])
+        print(f"\nTaken          {len(taken)} market-day(s), "
+              f"{len(by_market)} market(s). Re-fetching these costs nothing.")
+        for market in sorted(by_market):
+            days = sorted(by_market[market])
+            span = days[0] if len(days) == 1 else f"{days[0]} .. {days[-1]}"
+            print(f"{'':<15}{market:22} {len(days):>4}  {span}")
 
     # Only when something is wrong, and then verbatim. On an active token the
     # lines above say everything and the sentence was noise; on a lapsed,
@@ -662,7 +684,27 @@ def cmd_decode(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="komachi",
-        description="Kamakura Quant Lab market data downloader",
+        description="Kamakura Quant Lab market data downloader\n\n" + """commands
+  Grouped by what they touch. `komachi COMMAND --help` for any of them.
+
+  the service        these talk to Kamakura Quant Lab, or to a venue
+    token set          store the token from the download page
+    token status       allowance, balance, deadlines, and what has been taken
+    markets            what is available: datasets, span, known gaps
+    download           fetch market-days you bought       (spends allowance)
+    import             fetch a venue's own trade history  (spends nothing)
+
+  your files         these read what is already on disk, and ask nothing
+    trades             trades for one market-day
+    book               best bid and ask for one market-day
+    stats              rows and time range of one file
+    decode             schema and first rows of one file
+
+  occasional
+    local              what is on disk, as a table
+    duckdb             rebuild the views by hand; download and import do it
+    sql                print the view SQL
+""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 settings
@@ -700,11 +742,11 @@ downloading
     parser.add_argument("--token", help=argparse.SUPPRESS)
     parser.add_argument("--api-url", help=argparse.SUPPRESS)
     parser.add_argument("--root", help=argparse.SUPPRESS)
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     # The token is the thing a buyer holds, so it is the noun the commands
     # hang off: one to record it, one to ask what it is worth.
-    token = sub.add_parser("token", help="The purchase token: store it, or ask what it covers")
+    token = sub.add_parser("token",)
     token_sub = token.add_subparsers(dest="token_command", required=True)
     p = token_sub.add_parser("set", help="Verify a token and store it locally")
     p.add_argument("--token", required=True)
@@ -713,13 +755,10 @@ downloading
         "status", help="Allowance, balance and expiry"
     ).set_defaults(func=cmd_token_status)
     sub.add_parser(
-        "markets", help="Markets this token covers: datasets, span, and known gaps"
-    ).set_defaults(func=cmd_markets)
+        "markets",).set_defaults(func=cmd_markets)
 
     p = sub.add_parser(
-        "import",
-        help="Fetch a venue's own trade history (BINANCE, GMO) into the same data lake",
-    )
+        "import",)
     p.add_argument("--market", required=True,
                    help="EXCHANGE:SYMBOL, for example BINANCE:BTC_USDT or GMO:BTC_JPY")
     p.add_argument("--start", required=True, help="First JST date, inclusive")
@@ -728,21 +767,21 @@ downloading
     p.add_argument("--force", action="store_true", help="Re-import days already present")
     p.set_defaults(func=cmd_import)
 
-    p = sub.add_parser("trades", help="Print trades for one market-day")
+    p = sub.add_parser("trades",)
     p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")
     p.add_argument("--date", required=True, help="JST date, YYYY-MM-DD")
     p.add_argument("--rows", type=int, default=20)
     p.add_argument("--tail", action="store_true", help="Show the end of the day instead of the start")
     p.set_defaults(func=cmd_trades)
 
-    p = sub.add_parser("book", help="Print best bid and ask for one market-day")
+    p = sub.add_parser("book",)
     p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")
     p.add_argument("--date", required=True, help="JST date, YYYY-MM-DD")
     p.add_argument("--rows", type=int, default=20)
     p.add_argument("--tail", action="store_true", help="Show the end of the day instead of the start")
     p.set_defaults(func=cmd_book)
 
-    p = sub.add_parser("download", help="Download from a start date. Resumable")
+    p = sub.add_parser("download",)
     p.add_argument("--market", required=True, help="EXCHANGE:SYMBOL")
     p.add_argument("--start", required=True, help="First JST date, YYYY-MM-DD")
     p.add_argument("--days", type=int,
@@ -752,24 +791,24 @@ downloading
     p.add_argument("--force", action="store_true", help="Re-download files already present")
     p.set_defaults(func=cmd_download)
 
-    p = sub.add_parser("local", help="Show what is already downloaded")
+    p = sub.add_parser("local",)
     p.set_defaults(func=cmd_local)
 
     # `download` and `import` refresh the views themselves, so this is for
     # rebuilding after something else touched the tree -- a hand-copied file,
     # a deletion, a database moved elsewhere with --db.
-    p = sub.add_parser("duckdb", help="Rebuild the DuckDB views by hand. Normally automatic")
+    p = sub.add_parser("duckdb",)
     p.add_argument("--db", help="Database file. Defaults to <root>/kql.duckdb")
     p.set_defaults(func=cmd_duckdb)
 
-    p = sub.add_parser("sql", help="Print DuckDB view SQL for the downloaded tree")
+    p = sub.add_parser("sql",)
     p.set_defaults(func=cmd_sql)
 
-    p = sub.add_parser("stats", help="Row count and time range for a local file")
+    p = sub.add_parser("stats",)
     p.add_argument("--path", required=True)
     p.set_defaults(func=cmd_stats)
 
-    p = sub.add_parser("decode", help="Schema and first rows of a local file")
+    p = sub.add_parser("decode",)
     p.add_argument("--path", required=True)
     p.add_argument("--rows", type=int, default=5)
     p.set_defaults(func=cmd_decode)
