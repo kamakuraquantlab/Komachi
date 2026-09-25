@@ -19,7 +19,7 @@ from komachi import downloaders
 from komachi.downloaders import ImportError_
 from komachi import jst
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
-from komachi.layout import data_path, local_inventory, view_sql
+from komachi.layout import DATA_TYPES, data_path, local_inventory, view_sql
 from komachi.settings import DEFAULT_ROOT, ENV_FILE, ENV_TOKEN_KEY, resolve, save_token
 from komachi.weeks import describe, shapes
 
@@ -635,16 +635,28 @@ def cmd_download(args) -> int:
 
 
 def cmd_local(args) -> int:
-    """What is already on disk, without calling the API."""
+    """What is already on disk, without calling the API.
+
+    Every period, not the outer bounds. Three days in January and a month in
+    June is 33 days in two stretches; "2026-01-01 .. 2026-06-30" is a lie
+    about the same numbers, and it is the line a reader would use to decide
+    what still needs downloading.
+    """
     root = _settings(args).root
     inventory = local_inventory(root)
     if not inventory:
         print(f"Nothing downloaded under {root} yet.")
         return 0
     print(f"{root}\n")
-    print(f"{'market':24} {'dataset':10} {'days':>5}  range")
+    print(f"{'market':24} {'dataset':10} {'days':>5}  periods")
     for (market, data_type), dates in sorted(inventory.items()):
-        print(f"{market:24} {data_type:10} {len(dates):>5}  {dates[0]} .. {dates[-1]}")
+        spans = _runs(dates)
+        shown = spans[:SPANS_SHOWN]
+        print(f"{market:24} {data_type:10} {len(dates):>5}  {_span_text(*shown[0])}")
+        for first, last in shown[1:]:
+            print(f"{'':24} {'':10} {'':>5}  {_span_text(first, last)}")
+        if len(spans) > SPANS_SHOWN:
+            print(f"{'':24} {'':10} {'':>5}  +{len(spans) - SPANS_SHOWN} more period(s)")
     return 0
 
 
@@ -689,10 +701,38 @@ def _load_parquet(path: Path):
     return pq.read_table(path)
 
 
-def cmd_stats(args) -> int:
-    path = Path(args.path).expanduser()
+def _addressed_file(args) -> Path:
+    """The file a command was pointed at, however it was pointed.
+
+    A market and a date is how a buyer thinks -- it is what they bought and
+    what the calendar shows. A path is how a developer thinks, and is the only
+    way to reach a file that is not in the tree at all. Both work everywhere a
+    file is read, so no command has to be learned twice.
+    """
+    if getattr(args, "path", None):
+        path = Path(args.path).expanduser()
+        if not path.exists():
+            raise SystemExit(f"No such file: {path}")
+        return path
+
+    if not (args.market and args.date):
+        raise SystemExit(
+            "Say which file: --market MARKET --date DATE [--dataset Trade|OrderBook], "
+            "or --path PATH."
+        )
+    root = _settings(args).root
+    path = data_path(root, args.market, args.dataset, args.date)
     if not path.exists():
-        raise SystemExit(f"No such file: {path}")
+        raise SystemExit(
+            f"No {args.dataset} for {args.market} on {args.date} under {root}.\n"
+            f"Run:  komachi download --market {args.market} --start {args.date} --days 1"
+        )
+    return path
+
+
+def cmd_stats(args) -> int:
+    """Rows, columns, size and time range of one file."""
+    path = _addressed_file(args)
     table = _load_parquet(path)
     print(f"File      {path}")
     print(f"Rows      {table.num_rows:,}")
@@ -712,9 +752,8 @@ def cmd_stats(args) -> int:
 
 
 def cmd_decode(args) -> int:
-    path = Path(args.path).expanduser()
-    if not path.exists():
-        raise SystemExit(f"No such file: {path}")
+    """The schema of one file, and its first rows."""
+    path = _addressed_file(args)
     table = _load_parquet(path)
     print("Schema:")
     for field in table.schema:
@@ -847,14 +886,17 @@ downloading
     p = sub.add_parser("sql",)
     p.set_defaults(func=cmd_sql)
 
-    p = sub.add_parser("stats",)
-    p.add_argument("--path", required=True)
-    p.set_defaults(func=cmd_stats)
-
-    p = sub.add_parser("decode",)
-    p.add_argument("--path", required=True)
-    p.add_argument("--rows", type=int, default=5)
-    p.set_defaults(func=cmd_decode)
+    # Both addressings on both readers, so "which file" is one thing to learn.
+    for name, handler in (("stats", cmd_stats), ("decode", cmd_decode)):
+        p = sub.add_parser(name)
+        p.add_argument("--market", help="EXCHANGE:SYMBOL")
+        p.add_argument("--date", help="JST day, YYYY-MM-DD")
+        p.add_argument("--dataset", choices=DATA_TYPES, default="Trade",
+                       help="Which dataset of that market-day. Default Trade")
+        p.add_argument("--path", help="A file anywhere, instead of --market/--date")
+        if name == "decode":
+            p.add_argument("--rows", type=int, default=5)
+        p.set_defaults(func=handler)
 
     return parser
 
