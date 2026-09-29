@@ -14,10 +14,9 @@ from pathlib import Path
 
 import httpx
 
+from komachi import downloaders, jst
 from komachi.client import ApiError, KomachiClient
-from komachi import downloaders
 from komachi.downloaders import ImportError_
-from komachi import jst
 from komachi.duck import DuckDBUnavailable, build_database, missing_datasets
 from komachi.layout import DATA_TYPES, data_path, local_inventory, view_sql
 from komachi.settings import DEFAULT_ROOT, ENV_FILE, ENV_TOKEN_KEY, resolve, save_token

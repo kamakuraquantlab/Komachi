@@ -2,6 +2,7 @@
 
 import argparse
 
+
 def test_every_subcommand_resolves_to_a_handler():
     """Guards against a handler being renamed or removed out from under the parser.
 

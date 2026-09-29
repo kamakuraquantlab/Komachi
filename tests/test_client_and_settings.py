@@ -16,7 +16,6 @@ import pytest
 from komachi import settings, weeks
 from komachi.client import ApiError, KomachiClient
 
-
 # ---- the client ------------------------------------------------------------
 
 def _client(handler, token="hk_test"):
