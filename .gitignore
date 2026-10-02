@@ -12,3 +12,6 @@ venv/
 .env
 *.duckdb
 kql-data/
+
+# PyPI upload token for this project. Never commit.
+.pypirc
