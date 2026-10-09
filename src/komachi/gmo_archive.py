@@ -41,12 +41,22 @@ _COL_PRICE = 3
 _COL_TIME = 4
 
 
+def archive_symbol(symbol: str) -> str:
+    """GMO's own name for a market, which is not always ours.
+
+    Leverage markets match: BTC_JPY is BTC_JPY in both. Spot does not. GMO
+    publishes spot under the bare asset, BTC, and answers BTC_SPOT with 403
+    rather than 404, so the mismatch fails every day instead of looking like
+    an unpublished archive.
+    """
+    return symbol.removesuffix("_SPOT")
+
+
 def archive_url(symbol: str, file_date: str) -> str:
     """GMO files are keyed by symbol and date, nested by year and month."""
     day = dt.date.fromisoformat(file_date)
-    return (
-        f"{BASE_URL}/{symbol}/{day:%Y}/{day:%m}/{day:%Y%m%d}_{symbol}.csv.gz"
-    )
+    name = archive_symbol(symbol)
+    return f"{BASE_URL}/{name}/{day:%Y}/{day:%m}/{day:%Y%m%d}_{name}.csv.gz"
 
 
 def parse_trades_csv(raw: bytes) -> list[dict]:

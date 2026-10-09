@@ -36,6 +36,12 @@ def test_archive_url_nests_by_year_and_month():
     )
 
 
+def test_spot_archives_are_named_for_the_bare_asset():
+    assert gmo_archive.archive_url("BTC_SPOT", "2025-07-01") == (
+        "https://api.coin.z.com/data/trades/BTC/2025/07/20250701_BTC.csv.gz"
+    )
+
+
 def test_the_header_row_is_not_a_trade():
     rows = gmo_archive.parse_trades_csv(("\n".join([HEADER, *ROWS])).encode())
     assert len(rows) == 2
