@@ -1,12 +1,8 @@
 """Deciding what a run covers, before it spends anything."""
 
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
-import cli  # noqa: E402
+from komachi import cli
 
 
 class FakeClient:

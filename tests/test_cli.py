@@ -9,7 +9,7 @@ def test_every_subcommand_resolves_to_a_handler():
     Nothing else in the suite builds the parser, so a subcommand pointing at a
     function that no longer exists stayed invisible until the CLI was run.
     """
-    import cli
+    from komachi import cli
 
     parser = cli.build_parser()
     actions = [a for a in parser._subparsers._group_actions if hasattr(a, "choices")]
@@ -34,7 +34,7 @@ def test_every_subcommand_resolves_to_a_handler():
 
 def _status_cli(monkeypatch, state):
     """Run a command against a canned /api/me, with no network and no config."""
-    import cli
+    from komachi import cli
     from komachi.client import KomachiClient
 
     class FakeClient:
@@ -353,14 +353,14 @@ def test_status_shows_each_period_when_the_days_are_not_continuous(monkeypatch, 
 
 
 def test_a_single_taken_day_is_one_date_not_a_span():
-    import cli
+    from komachi import cli
 
     assert cli._runs(["2026-01-05"]) == [("2026-01-05", "2026-01-05")]
     assert cli._span_text("2026-01-05", "2026-01-05") == "2026-01-05"
 
 
 def test_runs_collapse_only_what_is_actually_consecutive():
-    import cli
+    from komachi import cli
 
     assert cli._runs(["2026-01-01", "2026-01-02", "2026-01-04"]) == [
         ("2026-01-01", "2026-01-02"), ("2026-01-04", "2026-01-04")]

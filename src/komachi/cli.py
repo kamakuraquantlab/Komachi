@@ -1,6 +1,7 @@
 """Kamakura Quant Lab buyer CLI.
 
-Run as: python src/cli.py <command> [options]
+Run as: komachi <command> [options], or from a checkout:
+PYTHONPATH=src python -m komachi.cli <command> [options]
 
 Auth resolves as --token, then KAMAKURAQUANTLAB_TOKEN in the environment, then
 the TOKEN line `token set` writes into ~/.kamakuraquantlab.env.
