@@ -136,3 +136,19 @@ def test_duckdb_on_an_empty_root_is_not_an_error(tmp_path):
     from komachi.duck import build_database
 
     assert build_database(tmp_path, tmp_path / "kql.duckdb") == {}
+
+
+def test_a_held_file_is_handed_over_and_a_partial_one_is_not(tmp_path):
+    """`bronze.file` vouches by the same rule `bronze.dates` lists by."""
+    from komachi import bronze
+
+    held = data_path(tmp_path, "GMO:BTC_JPY", "Trade", "2026-01-15")
+    held.parent.mkdir(parents=True)
+    held.write_bytes(b"")
+    data_path(tmp_path, "GMO:BTC_JPY", "Trade", "2026-01-16").parent.mkdir(parents=True)
+
+    assert bronze.file("GMO:BTC_JPY", "Trade", "2026-01-15", tmp_path) == held
+    with pytest.raises(bronze.MissingData, match="komachi download --market GMO:BTC_JPY"):
+        bronze.file("GMO:BTC_JPY", "Trade", "2026-01-16", tmp_path)
+    with pytest.raises(ValueError):
+        bronze.file("GMO:BTC_JPY", "Silver", "2026-01-15", tmp_path)

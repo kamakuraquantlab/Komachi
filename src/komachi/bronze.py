@@ -11,7 +11,10 @@ what counts as a complete day, or to the partition names has to be made in
 both, and the day they disagree is the day a derivation silently skips a date
 the downloader thinks it has.
 
-Nothing here touches the API or the network. It reports what is on disk.
+Nothing here touches the API or the network, and nothing here opens a file.
+Komachi places files and vouches for them; what is inside one is the reader's
+business. `file` is how a reader asks for one: by market, dataset and date,
+never by building the path itself.
 """
 
 from __future__ import annotations
@@ -19,10 +22,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .layout import BRONZE, local_inventory, parse_market
+from .layout import BRONZE, data_path, local_inventory, parse_market
 from .settings import data_root
 
 DATA_TYPES = ("Trade", "OrderBook")
+
+
+class MissingData(FileNotFoundError):
+    """A market-day that is not complete on disk."""
 
 
 @dataclass(frozen=True)
@@ -92,6 +99,26 @@ def dates(market: str, data_type: str, root: Path | str | None = None) -> list[s
         return []
     return sorted(d.name.split("=", 1)[1] for d in base.glob("date=*")
                   if (d / "data.parquet").is_file())
+
+
+def file(market: str, data_type: str, date: str, root: Path | str | None = None) -> Path:
+    """The parquet file holding one market-day, if it is complete on disk.
+
+    The same rule as `dates`: the file exists or the day is not held. Raises
+    `MissingData` naming the download that would fetch it, because the reader
+    that hit the gap is rarely the tool that can fill it.
+    """
+    if data_type not in DATA_TYPES:
+        raise ValueError(f"Not a bronze dataset: {data_type!r}. One of {DATA_TYPES}.")
+    base = _root(root)
+    path = data_path(base, market, data_type, date)
+    if not path.is_file():
+        raise MissingData(
+            f"No {data_type} for {market} on {date} under {base}. "
+            f"Download it first:  komachi download --market {market} "
+            f"--start {date} --end {date}"
+        )
+    return path
 
 
 def state(market: str, data_type: str, root: Path | str | None = None) -> DatasetState:
