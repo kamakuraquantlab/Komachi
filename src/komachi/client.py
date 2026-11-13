@@ -6,7 +6,10 @@ website can do is scriptable and vice versa.
 
 import httpx
 
+from . import __version__
+
 DEFAULT_API_URL = "http://127.0.0.1:9740"
+USER_AGENT = f"komachi/{__version__}"
 
 
 class ApiError(RuntimeError):
@@ -22,7 +25,11 @@ class KomachiClient:
     def __init__(self, api_url: str, token: str, timeout: float = 30.0):
         self.api_url = api_url.rstrip("/")
         self.token = token
-        self._client = httpx.Client(timeout=timeout, follow_redirects=True)
+        self._client = httpx.Client(
+            timeout=timeout,
+            follow_redirects=True,
+            headers={"User-Agent": USER_AGENT},
+        )
 
     def close(self) -> None:
         self._client.close()
@@ -111,4 +118,7 @@ class KomachiClient:
 
     def auth_header(self) -> dict:
         """For fetching a download link on a client this class does not own."""
-        return {"Authorization": f"Bearer {self.token}"}
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "User-Agent": USER_AGENT,
+        }

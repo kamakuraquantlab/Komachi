@@ -6,21 +6,22 @@ place, is stored in one place, and never reaches the data directory a buyer
 might commit to git.
 """
 
-import os
 import stat
 from pathlib import Path
 
 import httpx
 import pytest
 
-from komachi import settings, weeks
+from komachi import __version__, settings, weeks
 from komachi.client import ApiError, KomachiClient
 
 # ---- the client ------------------------------------------------------------
 
 def _client(handler, token="hk_test"):
     c = KomachiClient("https://api.example", token)
-    c._client = httpx.Client(transport=httpx.MockTransport(handler))
+    headers = dict(c._client.headers)
+    c._client.close()
+    c._client = httpx.Client(transport=httpx.MockTransport(handler), headers=headers)
     return c
 
 
@@ -29,11 +30,13 @@ def test_the_token_is_sent_as_a_bearer_and_nothing_else_is():
 
     def handler(request):
         seen["auth"] = request.headers.get("authorization")
+        seen["user_agent"] = request.headers.get("user-agent")
         seen["url"] = str(request.url)
         return httpx.Response(200, json={"ok": True})
 
     _client(handler).status()
     assert seen["auth"] == "Bearer hk_test"
+    assert seen["user_agent"] == f"komachi/{__version__}"
 
 
 def test_an_api_error_carries_the_status_and_the_detail():
@@ -61,7 +64,10 @@ def test_the_download_link_is_built_from_the_configured_api():
     c = KomachiClient("https://api.example", "hk_test")
     assert c.download_link("GMO:BTC_JPY", "2026-01-15", "Trade") == (
         "https://api.example/api/download/GMO:BTC_JPY/2026-01-15/Trade")
-    assert c.auth_header() == {"Authorization": "Bearer hk_test"}
+    assert c.auth_header() == {
+        "Authorization": "Bearer hk_test",
+        "User-Agent": f"komachi/{__version__}",
+    }
 
 
 
