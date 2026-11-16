@@ -19,7 +19,8 @@ SELECT exchange, symbol, count(*) FROM trade GROUP BY 1, 2;
 ## Two ways to get the data
 
 What the data is, what is published and how good each day is:
-[kamakuraquantlab.jp/data](https://kamakuraquantlab.jp/data/).
+[Market Archive](https://kamakuraquantlab.jp/en/tsurugaoka/), with the schema and quality rules in the
+[data specification](https://kamakuraquantlab.jp/en/tsurugaoka/format/).
 
 **A browser** — [tsurugaoka](https://kamakuraquantlab.jp/tsurugaoka/)
 

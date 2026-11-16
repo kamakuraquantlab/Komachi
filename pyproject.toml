@@ -12,7 +12,7 @@ requires-python = ">=3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE.md"]
 authors = [{name = "Kamakura Quant Lab", email = "support@kamakuraquantlab.jp"}]
-keywords = ["cryptocurrency", "market-data", "order-book", "japan", "quantitative-finance"]
+keywords = ["cryptocurrency", "market-data", "order-book", "japan", "quantitative-finance", "parquet", "duckdb"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
@@ -46,9 +46,9 @@ dev = [
 
 [project.urls]
 Homepage = "https://kamakuraquantlab.jp"
-Documentation = "https://kamakuraquantlab.jp/support/"
+Documentation = "https://kamakuraquantlab.jp/tool/"
 Source = "https://github.com/kamakuraquantlab/Komachi"
-"The data" = "https://kamakuraquantlab.jp/data/"
+"The data" = "https://kamakuraquantlab.jp/tsurugaoka/"
 
 [project.scripts]
 # `komachi.cli`, not a bare `cli`: a top-level module outside the package is

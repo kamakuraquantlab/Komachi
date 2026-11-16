@@ -28,8 +28,8 @@ will be the site's rather than the tool's. These are the same thing:
 | 保存先 / データレイク | the data root, `ROOT_PATH` in `~/.kamakuraquantlab.env` |
 
 When you link them to documentation, link the Japanese pages —
-`kamakuraquantlab.jp/data/`, `/tool/`, `/support/` are Japanese, and the same
-paths under `/en/` are English. `README.md` in this repository is Japanese;
+`kamakuraquantlab.jp/tsurugaoka/`, `/tool/`, `/support/` are Japanese, and the
+same paths under `/en/` are English. `README.md` in this repository is Japanese;
 this file is not.
 
 ## The one rule that matters
@@ -189,8 +189,9 @@ Two things are worth knowing before you start debugging:
 
 - `README.md` in this repository — the full command reference, in Japanese.
 - https://kamakuraquantlab.jp/tool/ — setup and usage, both languages.
-- https://kamakuraquantlab.jp/data/ — what the archive holds, the schema, the
-  quality rules and the known gaps.
+- https://kamakuraquantlab.jp/tsurugaoka/ — what the archive holds and the known
+  gaps; https://kamakuraquantlab.jp/tsurugaoka/format/ — the schema and the
+  quality rules.
 - https://kamakuraquantlab.jp/support/ — the questions that come up most, and
   the address to write to.
 

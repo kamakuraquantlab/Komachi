@@ -270,7 +270,8 @@ def cmd_markets(args) -> int:
 
     print("\nDates are Asia/Tokyo days. 'missing' lists days inside the span with")
     print("no file; dates outside it are not yet collected rather than missing.")
-    print("Coverage, schema and quality rules:  https://kamakuraquantlab.jp/data/")
+    print("Coverage and gaps:          https://kamakuraquantlab.jp/tsurugaoka/")
+    print("Schema and quality rules:   https://kamakuraquantlab.jp/tsurugaoka/format/")
     print("\n  Use 'komachi download --market MARKET --start DATE' to get the files.")
 
     # The second half of the answer. A buyer looking for a venue's own trade

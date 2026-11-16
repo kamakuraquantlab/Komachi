@@ -6,7 +6,7 @@
 *[English README](README-en.md)*
 
 [Kamakura Quant Lab](https://kamakuraquantlab.jp) のデータは、2 つの方法で取得できます。
-収録範囲、スキーマ、品質基準は[データのページ](https://kamakuraquantlab.jp/data/)に記載しています。
+収録範囲は [Market Archive](https://kamakuraquantlab.jp/tsurugaoka/) に、スキーマと品質基準は[データ仕様](https://kamakuraquantlab.jp/tsurugaoka/format/)に記載しています。
 
 **ブラウザ** — [tsurugaoka](https://kamakuraquantlab.jp/tsurugaoka/)
 
@@ -130,7 +130,7 @@ GMO:BTC_JPY            OrderBook           430  2025-07-01 .. 2026-09-12  2026-0
 `missing` は収録期間内で欠測している日付です。
 収録期間の前後は、欠測ではなく未収集として扱います。
 日ごとの品質や、スキーマ、品質基準は
-[Market Archive](https://kamakuraquantlab.jp/data/) のページに掲載しています。
+[Market Archive](https://kamakuraquantlab.jp/tsurugaoka/) のページに掲載しています。
 
 取得済みのデータは `komachi local` で確認できます。
 
